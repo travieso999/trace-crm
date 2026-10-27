@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     notify_smtp_from: str | None = None
     notify_smtp_starttls: bool = True
 
+    # Bearer secret for GET /api/cron/engine (Vercel Cron and the external per-minute pinger). Endpoint is off when unset.
+    cron_secret: str | None = None
+
+    @field_validator("database_url")
+    @classmethod
+    def _database_url(cls, v: str) -> str:
+        # Hosted Postgres (Neon, Vercel) hands out postgres:// URLs; SQLAlchemy needs the psycopg driver named
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix):]
+        return v
+
     @field_validator("app_env")
     @classmethod
     def _env(cls, v: str) -> str:
@@ -128,6 +140,8 @@ class Settings(BaseSettings):
             problems.append("SECRET_KEY must be at least 32 characters")
         if self.is_production and not self.cookie_secure:
             problems.append("COOKIE_SECURE must be true in production")
+        if self.cron_secret is not None and len(self.cron_secret) < 32:
+            problems.append("CRON_SECRET must be at least 32 characters")
         return problems
 
 

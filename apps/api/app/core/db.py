@@ -13,7 +13,10 @@ _SessionLocal: sessionmaker | None = None
 def get_engine():
     global _engine, _SessionLocal
     if _engine is None:
-        _engine = create_engine(get_settings().database_url, pool_pre_ping=True, pool_size=10, max_overflow=10)
+        # prepare_threshold=None: no server-side prepared statements, which break behind PgBouncer-style
+        # transaction poolers (Neon's pooled endpoint)
+        _engine = create_engine(get_settings().database_url, pool_pre_ping=True, pool_size=10, max_overflow=10,
+                                connect_args={"prepare_threshold": None})
         _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False, autoflush=False)
     return _engine
 

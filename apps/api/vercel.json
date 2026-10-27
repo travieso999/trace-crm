@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "fastapi",
+  "functions": {
+    "app/main.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{tests/**,var/**,.venv/**,.ruff_cache/**,**/__pycache__/**}"
+    }
+  },
+  "crons": [
+    { "path": "/api/cron/engine", "schedule": "0 13 * * *" }
+  ]
+}

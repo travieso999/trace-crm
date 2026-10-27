@@ -165,6 +165,30 @@ Legend: [x] done & verified · [~] implemented, awaiting external verification �
       (any local process can connect) — fine for a single-user dev PC, use the Docker/managed Postgres with a
       password in production
 
+## Vercel deployment (2026-10-27)
+- [x] Frontend: Vercel project `trace-crm` (root `apps/web`, Git-connected) → https://trace-crm-blush.vercel.app.
+      `API_URL=https://trace-crm-api.vercel.app` (production) so the `/api/*` and `/u/*` rewrites reach the API; cookies
+      stay first-party on the web domain
+- [x] API: Vercel project `trace-crm-api` (FastAPI preset, `apps/api/vercel.json`, deployed with `vercel deploy --prod`
+      from `apps/api`) → https://trace-crm-api.vercel.app. `.vercelignore` keeps `.env`, `.venv`, tests and
+      `pyproject.toml` out (without it Vercel installs from requirements.txt). Production env: APP_ENV=production,
+      COOKIE_SECURE, TRUST_PROXY_HEADERS, fresh SECRET_KEY/TOKEN_ENCRYPTION_KEYS, CRON_SECRET, REAL_SENDING=test_only,
+      Google client + ALLOWED_TEST_RECIPIENTS copied from local
+- [x] Database: Neon (Vercel Marketplace, free, iad1) `trace-crm-db`; app uses the pooled DATABASE_URL (postgres:// URLs
+      are normalized to psycopg; server-side prepared statements off for the pooler). Migrations run from a dev PC:
+      `DATABASE_URL=<DATABASE_URL_UNPOOLED> python -m alembic upgrade head`. Admin created with `app.cli create-admin`
+- [x] Engine: `GET /api/cron/engine` (Bearer CRON_SECRET; 404 when unset) runs one `engine.tick()`; a Postgres
+      advisory lock skips overlapping passes. Vercel Cron calls it daily (Hobby limit)
+- [x] Verified: pytest 106 passed (5 new in tests/test_cron.py), ruff clean; live: health 200 with DB, cron 401 without
+      the secret and a full pass with it, /api/docs 404, login → /me → create/delete contact through the web domain,
+      Secure + HttpOnly session cookie
+- [ ] Per-minute engine on Hobby: external pinger (cron-job.org) GET https://trace-crm-api.vercel.app/api/cron/engine
+      every minute with header `Authorization: Bearer <CRON_SECRET>`
+- [ ] Google Cloud Console: add redirect URI https://trace-crm-blush.vercel.app/api/email-accounts/oauth/google/callback
+- [ ] API project is deployed by CLI, not Git: connect the repo with Root Directory `apps/api` for push-to-deploy
+- [ ] Limits on Vercel: request bodies max 4.5 MB (CSV/XLSX imports larger than that fail before the 10 MB app cap);
+      rate limiter is per function instance unless REDIS_URL is set; Hobby is for non-commercial use per Vercel terms
+
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).
 - No Microsoft / OpenAI credentials yet. Google OAuth client is set by the user in apps/api/.env (git-ignored).

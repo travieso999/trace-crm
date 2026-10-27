@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field } from "@/components/common";
+import { TraceLogo } from "@/components/brand";
 import { api, errorMessage } from "@/lib/api";
 import { zodResolver } from "@/lib/zod-resolver";
 
@@ -61,11 +62,11 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-background px-4 py-10">
+      <TraceLogo className="h-14 sm:h-16" title="Trace Studio" />
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <div className="mb-2 flex size-9 items-center justify-center rounded-lg bg-primary font-bold text-primary-foreground">T</div>
-          <CardTitle className="text-lg">Sign in to Trace Studio Outreach</CardTitle>
+          <CardTitle className="text-lg">Sign in to Trace CRM</CardTitle>
           <CardDescription>Internal access only. Accounts are created by an administrator.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -74,6 +75,7 @@ export default function LoginPage() {
           </Suspense>
         </CardContent>
       </Card>
+      <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Trace Studio · Internal</p>
     </div>
   );
 }

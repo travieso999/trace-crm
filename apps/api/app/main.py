@@ -28,13 +28,14 @@ def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
     app = FastAPI(
-        title="Trace Studio Outreach API",
+        title="Trace CRM API",
         version="1.0.0",
         description="Internal cold-outreach platform API. All endpoints except /api/health, OAuth callbacks and "
                     "unsubscribe pages require a session cookie; unsafe methods also require X-CSRF-Token.",
-        docs_url="/api/docs",
+        # the interactive docs and schema map every endpoint; not published in production
+        docs_url=None if settings.is_production else "/api/docs",
         redoc_url=None,
-        openapi_url="/api/openapi.json",
+        openapi_url=None if settings.is_production else "/api/openapi.json",
     )
 
     @app.middleware("http")
@@ -81,11 +82,28 @@ def create_app() -> FastAPI:
         return JSONResponse({"status": "ok" if db_ok else "degraded", "database": db_ok},
                             status_code=200 if db_ok else 503)
 
-    from app.api.routes import auth, companies, contacts, dashboard
+    from app.api.routes import (
+        analytics,
+        auth,
+        campaigns,
+        companies,
+        contacts,
+        crm,
+        dashboard,
+        email_accounts,
+        inbox,
+        notifications,
+        opportunities,
+        suppressions,
+        unsubscribe,
+    )
     from app.api.routes import settings as settings_routes
 
-    for module in (auth, dashboard, contacts, companies, settings_routes):
+    for module in (auth, dashboard, contacts, companies, settings_routes, email_accounts, campaigns, inbox, crm,
+                   opportunities, notifications, suppressions, analytics, unsubscribe):
         app.include_router(module.router)
+    app.include_router(campaigns.templates_router)
+    app.include_router(opportunities.notes_router)
 
     problems = settings.validate_for_runtime()
     if problems:

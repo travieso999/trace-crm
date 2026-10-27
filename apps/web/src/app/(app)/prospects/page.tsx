@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, Download, Plus, Search, Upload, Users, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Download, Plus, Search, Send, Upload, Users, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -16,6 +16,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog, EmptyState, ErrorState, NativeSelect, PageHeader, Pagination, StatusBadge } from "@/components/common";
 import { LeadForm, toPayload } from "@/components/lead-form";
+import { EnrollDialog } from "@/components/enroll-dialog";
 import { useCanWrite } from "@/components/app-shell";
 import { api, download, errorMessage } from "@/lib/api";
 import { fullName, humanize, num, relTime } from "@/lib/format";
@@ -54,10 +55,11 @@ function SortHead({ label, k, sort, onSort, className }: { label: string; k: str
 function BulkBar({ ids, tags, onDone }: { ids: string[]; tags: Tag[]; onDone: () => void }) {
   const qc = useQueryClient();
   const [confirmDelete, setConfirmDelete] = React.useState(false);
+  const [enrolling, setEnrolling] = React.useState(false);
   const bulk = useMutation({
     mutationFn: (body: { action: string; value?: string }) => api<{ updated: number }>("/api/contacts/bulk", { body: { ids, ...body } }),
     onSuccess: (r, vars) => {
-      toast.success(`${humanize(vars.action)}: ${num(r.updated)} lead${r.updated === 1 ? "" : "s"} updated`);
+      toast.success(`${humanize(vars.action)}: ${num(r.updated)} prospect${r.updated === 1 ? "" : "s"} updated`);
       qc.invalidateQueries({ queryKey: ["contacts"] });
       qc.invalidateQueries({ queryKey: ["contact-tags"] });
       setConfirmDelete(false);
@@ -77,7 +79,7 @@ function BulkBar({ ids, tags, onDone }: { ids: string[]; tags: Tag[]; onDone: ()
     <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2 text-sm" role="region" aria-label="Bulk actions">
       <span className="font-medium">{num(ids.length)} selected</span>
       <NativeSelect
-        aria-label="Set lead status"
+        aria-label="Set prospect status"
         value=""
         disabled={bulk.isPending}
         onChange={(e) => e.target.value && bulk.mutate({ action: "set_status", value: e.target.value })}
@@ -102,6 +104,10 @@ function BulkBar({ ids, tags, onDone }: { ids: string[]; tags: Tag[]; onDone: ()
           </option>
         ))}
       </NativeSelect>
+      <Button variant="outline" size="sm" disabled={bulk.isPending} onClick={() => setEnrolling(true)}>
+        <Send /> Add to campaign…
+      </Button>
+      <EnrollDialog contactIds={ids} open={enrolling} onOpenChange={setEnrolling} onDone={onDone} />
       <form onSubmit={addTag} className="flex items-center gap-1">
         <Input
           aria-label="Tag to add"
@@ -138,7 +144,7 @@ function BulkBar({ ids, tags, onDone }: { ids: string[]; tags: Tag[]; onDone: ()
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        title={`Delete ${num(ids.length)} lead${ids.length === 1 ? "" : "s"}?`}
+        title={`Delete ${num(ids.length)} prospect${ids.length === 1 ? "" : "s"}?`}
         description="They are removed from all campaigns and pending sends are cancelled."
         confirmLabel="Delete"
         destructive
@@ -193,7 +199,7 @@ export default function LeadsPage() {
 
   async function exportCsv() {
     try {
-      await download("/api/contacts/export", { q, ...filters }, "contacts.csv");
+      await download("/api/contacts/export", { q, ...filters }, "prospects.csv");
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -202,10 +208,10 @@ export default function LeadsPage() {
   async function create(values: Parameters<typeof toPayload>[0]) {
     try {
       const c = await api<Contact>("/api/contacts", { body: toPayload(values) });
-      toast.success("Lead created");
+      toast.success("Prospect created");
       qc.invalidateQueries({ queryKey: ["contacts"] });
       setCreating(false);
-      router.push(`/leads/${c.id}`);
+      router.push(`/prospects/${c.id}`);
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -214,7 +220,7 @@ export default function LeadsPage() {
   return (
     <>
       <PageHeader
-        title="Leads"
+        title="Prospects"
         description={list.data ? `${num(list.data.total)} ${filtered ? "matching" : "total"}` : undefined}
         actions={
           <>
@@ -223,11 +229,11 @@ export default function LeadsPage() {
             </Button>
             {canWrite && (
               <>
-                <Link href="/leads/import" className={cn(buttonVariants({ variant: "outline" }))}>
+                <Link href="/prospects/import" className={cn(buttonVariants({ variant: "outline" }))}>
                   <Upload /> Import CSV
                 </Link>
                 <Button onClick={() => setCreating(true)}>
-                  <Plus /> Add lead
+                  <Plus /> Add prospect
                 </Button>
               </>
             )}
@@ -241,13 +247,13 @@ export default function LeadsPage() {
           <Input
             type="search"
             placeholder="Search name, email, company…"
-            aria-label="Search leads"
+            aria-label="Search prospects"
             className="pl-8"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <NativeSelect aria-label="Lead status" value={filters.lead_status} onChange={(e) => setFilters({ ...filters, lead_status: e.target.value })}>
+        <NativeSelect aria-label="Prospect status" value={filters.lead_status} onChange={(e) => setFilters({ ...filters, lead_status: e.target.value })}>
           <option value="">All statuses</option>
           {LEAD_STATUSES.map((s) => (
             <option key={s} value={s}>
@@ -304,11 +310,11 @@ export default function LeadsPage() {
       ) : items.length === 0 ? (
         <EmptyState
           icon={Users}
-          title={filtered ? "No leads match these filters" : "No leads yet"}
-          description={filtered ? "Try a different search or clear the filters." : "Import a CSV or add your first lead."}
+          title={filtered ? "No prospects match these filters" : "No prospects yet"}
+          description={filtered ? "Try a different search or clear the filters." : "Import a CSV or add your first prospect."}
           action={
             !filtered && canWrite ? (
-              <Link href="/leads/import" className={cn(buttonVariants())}>
+              <Link href="/prospects/import" className={cn(buttonVariants())}>
                 <Upload /> Import CSV
               </Link>
             ) : undefined
@@ -353,7 +359,7 @@ export default function LeadsPage() {
                       </TableCell>
                     )}
                     <TableCell className="max-w-64">
-                      <Link href={`/leads/${c.id}`} className="block truncate font-medium hover:underline">
+                      <Link href={`/prospects/${c.id}`} className="block truncate font-medium hover:underline">
                         {fullName(c)}
                       </Link>
                       <div className="truncate text-xs text-muted-foreground">
@@ -392,9 +398,9 @@ export default function LeadsPage() {
       <Dialog open={creating} onOpenChange={setCreating}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add lead</DialogTitle>
+            <DialogTitle>Add prospect</DialogTitle>
           </DialogHeader>
-          <LeadForm submitLabel="Create lead" onSubmit={create} onCancel={() => setCreating(false)} />
+          <LeadForm submitLabel="Create prospect" onSubmit={create} onCancel={() => setCreating(false)} />
         </DialogContent>
       </Dialog>
     </>

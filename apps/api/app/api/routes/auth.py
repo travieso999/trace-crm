@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -75,6 +77,9 @@ def me(sess: UserSession = Depends(current_session)):
 def change_password(body: PasswordChange, request: Request, sess: UserSession = Depends(current_session),
                     db: Session = Depends(get_db)):
     user = db.get(User, sess.user_id)
+    # a stolen session must not allow guessing the current password at API speed
+    if not ratelimit.hit(f"password:user:{user.id}", get_settings().login_rate_limit_per_minute):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many attempts. Try again in a minute.")
     if not verify_password(user.password_hash, body.current_password):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Current password is incorrect")
     try:
@@ -127,12 +132,12 @@ def create_user(body: UserCreate, request: Request, actor: User = Depends(admin)
 
 
 @router.patch("/users/{user_id}", response_model=UserOut)
-def update_user(user_id: str, body: UserUpdate, request: Request, actor: User = Depends(admin),
+def update_user(user_id: uuid.UUID, body: UserUpdate, request: Request, actor: User = Depends(admin),
                 db: Session = Depends(get_db)):
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, "User not found")
-    changes = body.model_dump(exclude_unset=True)
+    changes = body.model_dump(exclude_unset=True, exclude_none=True)  # an explicit null never blanks a field
     if user.id == actor.id and (changes.get("role", "admin") != "admin" or changes.get("is_active") is False):
         raise HTTPException(400, "You cannot demote or deactivate yourself")
     if user.role == "admin" and (changes.get("role", "admin") != "admin" or changes.get("is_active") is False):

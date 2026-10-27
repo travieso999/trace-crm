@@ -121,7 +121,7 @@ export function LeadForm({
         <Field label="Tags" htmlFor="tags" hint="Comma separated">
           <Input id="tags" {...register("tags")} />
         </Field>
-        <Field label="Lead status" htmlFor="lead_status">
+        <Field label="Prospect status" htmlFor="lead_status">
           <NativeSelect id="lead_status" {...register("lead_status")}>
             {LEAD_STATUSES.map((s) => (
               <option key={s} value={s}>

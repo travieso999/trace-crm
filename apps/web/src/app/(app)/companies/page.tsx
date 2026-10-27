@@ -108,7 +108,7 @@ export default function CompaniesPage() {
         <EmptyState
           icon={Building2}
           title={filtered ? "No companies match" : "No companies yet"}
-          description={filtered ? "Try a different search." : "Companies are created automatically when you import leads."}
+          description={filtered ? "Try a different search." : "Companies are created automatically when you import prospects."}
         />
       ) : (
         <>
@@ -120,7 +120,7 @@ export default function CompaniesPage() {
                   <TableHead className="hidden md:table-cell">Industry</TableHead>
                   <TableHead className="hidden md:table-cell">Location</TableHead>
                   <TableHead>Website</TableHead>
-                  <TableHead className="text-right">Leads</TableHead>
+                  <TableHead className="text-right">Prospects</TableHead>
                   <TableHead className="hidden lg:table-cell">Updated</TableHead>
                 </TableRow>
               </TableHeader>

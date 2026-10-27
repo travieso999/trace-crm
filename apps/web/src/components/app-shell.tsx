@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTheme } from "next-themes";
 import { cn } from "cn";
+import type { LucideIcon } from "lucide-react";
 import {
   BarChart3,
   Building2,
@@ -35,30 +36,58 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
+import { NotificationBell } from "@/components/notification-bell";
+import { TraceMark } from "@/components/brand";
 import { api } from "@/lib/api";
 import type { User } from "@/lib/types";
 
-export const NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
-  { href: "/campaigns", label: "Campaigns", icon: Send },
-  { href: "/leads", label: "Leads", icon: Users },
-  { href: "/pipeline", label: "Pipeline", icon: KanbanSquare },
-  { href: "/companies", label: "Companies", icon: Building2 },
-  { href: "/email-accounts", label: "Email Accounts", icon: Mail },
-  { href: "/inbox", label: "Unified Inbox", icon: Inbox },
-  { href: "/sequences", label: "Sequences", icon: ListOrdered },
-  { href: "/ai", label: "AI Personalization", icon: Sparkles },
-  { href: "/audits", label: "Website Audits", icon: FileSearch },
-  { href: "/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/suppressions", label: "Suppression List", icon: ShieldBan },
-  { href: "/settings", label: "Settings", icon: Settings },
-] as const;
+type NavItem = { href: string; label: string; icon: LucideIcon };
+
+export const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
+  { label: null, items: [{ href: "/", label: "Overview", icon: LayoutDashboard }] },
+  {
+    label: "Sales",
+    items: [
+      { href: "/opportunities", label: "Opportunities", icon: KanbanSquare },
+      { href: "/prospects", label: "Prospects", icon: Users },
+      { href: "/companies", label: "Companies", icon: Building2 },
+    ],
+  },
+  {
+    label: "Outreach",
+    items: [
+      { href: "/campaigns", label: "Campaigns", icon: Send },
+      { href: "/sequences", label: "Sequences", icon: ListOrdered },
+      { href: "/inbox", label: "Unified Inbox", icon: Inbox },
+      { href: "/email-accounts", label: "Email Accounts", icon: Mail },
+    ],
+  },
+  {
+    label: "Insights & tools",
+    items: [
+      { href: "/analytics", label: "Analytics", icon: BarChart3 },
+      { href: "/ai", label: "AI Personalization", icon: Sparkles },
+      { href: "/audits", label: "Website Audits", icon: FileSearch },
+    ],
+  },
+  {
+    label: "Admin",
+    items: [
+      { href: "/suppressions", label: "Suppression List", icon: ShieldBan },
+      { href: "/settings", label: "Settings", icon: Settings },
+    ],
+  },
+];
+
+export const NAV = NAV_GROUPS.flatMap((g) => g.items);
 
 type Me = { user: User; csrf_token: string };
 
@@ -72,9 +101,21 @@ function isActive(pathname: string, href: string) {
 
 function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
+  const unread = useQuery({
+    queryKey: ["inbox-unread"],
+    queryFn: () => api<{ unread: number }>("/api/inbox/unread-count"),
+    refetchInterval: 60_000,
+  }).data?.unread;
   return (
-    <nav aria-label="Main" className="flex flex-col gap-0.5 px-2">
-      {NAV.map(({ href, label, icon: Icon }) => {
+    <nav aria-label="Main" className="flex flex-col px-2.5">
+      {NAV_GROUPS.map((group, gi) => (
+        <div key={group.label ?? "top"} role="group" aria-label={group.label ?? undefined} className={cn("flex flex-col gap-1", gi > 0 && "mt-5")}>
+          {group.label && (collapsed ? (
+            <div className="mx-2 mb-1 h-px bg-sidebar-border" aria-hidden />
+          ) : (
+            <div className="mb-1 px-3 text-[11px] font-semibold tracking-[0.12em] text-sidebar-foreground/45 uppercase animate-label-in">{group.label}</div>
+          ))}
+      {group.items.map(({ href, label, icon: Icon }) => {
         const active = isActive(pathname, href);
         const link = (
           <Link
@@ -83,14 +124,26 @@ function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "flex h-8 items-center gap-2.5 rounded-md px-2 text-sm text-sidebar-foreground/75 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
-              active && "bg-sidebar-accent font-medium text-sidebar-foreground",
+              "relative flex h-10 items-center gap-3 rounded-lg px-3 text-[15px] text-sidebar-foreground/75 outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+              active &&
+                "bg-sidebar-accent font-medium text-sidebar-foreground before:absolute before:inset-y-2 before:left-0 before:w-[3px] before:rounded-full before:bg-sidebar-primary",
               collapsed && "justify-center px-0",
             )}
           >
-            <Icon className={cn("size-4 shrink-0", active && "text-primary")} aria-hidden />
-            {!collapsed && <span className="truncate">{label}</span>}
+            <Icon className={cn("size-[18px] shrink-0", active && "text-signal")} aria-hidden />
+            {!collapsed && <span className="animate-label-in truncate">{label}</span>}
             {collapsed && <span className="sr-only">{label}</span>}
+            {href === "/inbox" && !!unread && (
+              <span
+                className={cn(
+                  "rounded-full bg-primary px-1.5 text-[10px] font-semibold leading-4 text-primary-foreground tabular-nums",
+                  collapsed ? "absolute right-1 top-0.5" : "ml-auto",
+                )}
+              >
+                {unread > 99 ? "99+" : unread}
+                <span className="sr-only"> unread</span>
+              </span>
+            )}
           </Link>
         );
         return collapsed ? (
@@ -102,40 +155,49 @@ function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
           link
         );
       })}
+        </div>
+      ))}
     </nav>
   );
 }
 
 function Brand({ collapsed }: { collapsed: boolean }) {
   return (
-    <div className={cn("flex h-14 items-center gap-2 px-4", collapsed && "justify-center px-0")}>
-      <div className="flex size-7 items-center justify-center rounded-lg bg-primary text-[13px] font-bold text-primary-foreground">
-        T
-      </div>
+    <Link
+      href="/"
+      className={cn(
+        "flex h-16 shrink-0 items-center gap-3 px-5 outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+        collapsed && "justify-center px-0",
+      )}
+    >
+      <TraceMark className="h-6 text-sidebar-foreground" title="Trace Studio" />
       {!collapsed && (
         <div className="leading-tight">
-          <div className="text-sm font-semibold">Trace Studio</div>
-          <div className="text-[11px] text-muted-foreground">Outreach</div>
+          <div className="text-[15px] font-semibold tracking-tight">Trace CRM</div>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground">Trace Studio</div>
         </div>
       )}
-    </div>
+    </Link>
   );
 }
 
 function ThemeMenuItems() {
-  const { setTheme } = useTheme();
+  // next-themes persists the choice in localStorage ("theme").
+  const { theme, setTheme } = useTheme();
   return (
     <DropdownMenuGroup>
       <DropdownMenuLabel>Theme</DropdownMenuLabel>
-      <DropdownMenuItem onClick={() => setTheme("light")}>
-        <Sun /> Light
-      </DropdownMenuItem>
-      <DropdownMenuItem onClick={() => setTheme("dark")}>
-        <Moon /> Dark
-      </DropdownMenuItem>
-      <DropdownMenuItem onClick={() => setTheme("system")}>
-        <Monitor /> System
-      </DropdownMenuItem>
+      <DropdownMenuRadioGroup value={theme ?? "system"} onValueChange={(v) => setTheme(String(v))}>
+        <DropdownMenuRadioItem value="light">
+          <Sun /> Light
+        </DropdownMenuRadioItem>
+        <DropdownMenuRadioItem value="dark">
+          <Moon /> Dark
+        </DropdownMenuRadioItem>
+        <DropdownMenuRadioItem value="system">
+          <Monitor /> System
+        </DropdownMenuRadioItem>
+      </DropdownMenuRadioGroup>
     </DropdownMenuGroup>
   );
 }
@@ -177,6 +239,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const qc = useQueryClient();
   const collapsed = React.useSyncExternalStore(subscribeCollapsed, readCollapsed, () => false);
+  const fullWidth = usePathname().startsWith("/opportunities");
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   const toggle = React.useCallback(() => writeCollapsed(!readCollapsed()), []);
@@ -208,7 +271,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   if (me.isPending || me.isError) {
     return (
       <div className="flex min-h-screen">
-        <div className="hidden w-60 border-r bg-sidebar p-4 md:block">
+        <div className="hidden w-64 border-r bg-sidebar p-4 md:block">
           <Skeleton className="mb-6 h-7 w-32" />
           {Array.from({ length: 10 }).map((_, i) => (
             <Skeleton key={i} className="mb-2 h-6 w-full" />
@@ -232,12 +295,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </a>
       <aside
         className={cn(
-          "sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-sidebar transition-[width] duration-200 md:flex",
-          collapsed ? "w-14" : "w-60",
+          "sticky top-0 hidden h-screen shrink-0 flex-col border-r bg-sidebar md:flex",
+          collapsed ? "w-16" : "w-64",
         )}
       >
         <Brand collapsed={collapsed} />
-        <div className="flex-1 overflow-y-auto py-2">
+        <div className="flex-1 overflow-y-auto py-3">
           <NavList collapsed={collapsed} />
         </div>
         <div className="border-t p-2">
@@ -264,16 +327,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </Sheet>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background/85 px-4 backdrop-blur md:px-6">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b bg-background px-4 md:px-6">
           <Button variant="ghost" size="icon-sm" className="md:hidden" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
             <Menu />
           </Button>
+          <Link href="/" className="flex items-center gap-2 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring md:hidden">
+            <TraceMark className="h-4" title="Trace Studio" />
+            <span className="text-sm font-semibold tracking-tight">Trace CRM</span>
+          </Link>
           <div className="flex-1" />
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
                 <Button variant="ghost" className="gap-2 px-1.5" aria-label="Account menu">
-                  <span className="flex size-7 items-center justify-center rounded-full bg-primary/12 text-xs font-semibold text-primary">
+                  <span className="flex size-7 items-center justify-center rounded-full bg-primary/15 text-xs font-semibold text-signal">
                     {initials}
                   </span>
                   <span className="hidden text-sm sm:inline">{user.full_name || user.email}</span>
@@ -298,8 +365,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <NotificationBell />
         </header>
-        <main id="main" className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 md:px-6 lg:px-8">
+        <main id="main" className={cn("mx-auto w-full flex-1 px-4 py-6 md:px-6 lg:px-8", !fullWidth && "max-w-[1400px]")}>
           {children}
         </main>
       </div>
@@ -310,4 +378,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 export function useCanWrite() {
   const me = useMe();
   return me.data ? me.data.user.role !== "viewer" : false;
+}
+
+/** Mailboxes, settings and suppression removal are admin-only on the API. */
+export function useIsAdmin() {
+  const me = useMe();
+  return me.data?.user.role === "admin";
 }

@@ -199,6 +199,10 @@ class Conversation(UUIDPk, Timestamps, Base):
     has_inbound: Mapped[bool] = mapped_column(Boolean, default=False)
     is_read: Mapped[bool] = mapped_column(Boolean, default=True)
     intent: Mapped[str | None] = mapped_column(String(40))
+    # Hidden from the Unified Inbox (messages, events and analytics are kept). reason: deleted | not_campaign_reply
+    hidden_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    hidden_reason: Mapped[str | None] = mapped_column(String(40))
+    hidden_by_user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
 
     contact: Mapped[Contact | None] = relationship()
     email_account: Mapped[EmailAccount] = relationship()

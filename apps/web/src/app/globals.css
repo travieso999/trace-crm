@@ -18,6 +18,9 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
+  --color-signal: var(--signal);
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
   --color-chart-5: var(--chart-5);
   --color-chart-4: var(--chart-4);
   --color-chart-3: var(--chart-3);
@@ -48,94 +51,100 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * Trace brand palette (sampled from the official logo):
+ *   ink    #0F0F0D  warm near-black
+ *   paper  #F4F1E9  warm off-white
+ *   signal #FF5A33  the single accent
+ * Neutrals are warm steps between ink and paper. Primary surfaces use signal with ink text (6.1:1);
+ * --signal is the text-safe accent for orange text/icons (>= 4.5:1 on each theme's surfaces).
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --ink: #0f0f0d;
+  --paper: #f4f1e9;
+  --signal: #b8401f;
+
+  --background: #f8f6f1;
+  --foreground: #0f0f0d;
+  --card: #fdfcf9;
+  --card-foreground: #0f0f0d;
+  --popover: #fdfcf9;
+  --popover-foreground: #0f0f0d;
+  --primary: #ff5a33;
+  --primary-foreground: #0f0f0d;
+  --secondary: #ece8de;
+  --secondary-foreground: #0f0f0d;
+  --muted: #efebe2;
+  --muted-foreground: #66625a;
+  --accent: #ece8de;
+  --accent-foreground: #0f0f0d;
+  --destructive: #be1d4a; /* crimson, kept clearly apart from signal orange */
+  --border: #e1ddd2;
+  --input: #d6d1c5;
+  --ring: #ff5a33;
+  --radius: 0.375rem;
+
+  --sidebar: #f4f1e9;
+  --sidebar-foreground: #0f0f0d;
+  --sidebar-primary: #ff5a33;
+  --sidebar-primary-foreground: #0f0f0d;
+  --sidebar-accent: #e8e3d8;
+  --sidebar-accent-foreground: #0f0f0d;
+  --sidebar-border: #e1ddd2;
+  --sidebar-ring: #ff5a33;
+
+  /* Charts: series-1 = signal (darkened for >= 3:1 against light cards), series-2 = ink-family */
+  --series-1: #e64a24;
+  --series-2: #4a4740;
+  --chart-grid: #e7e3d9;
+  --chart-axis: #66625a;
+  --chart-1: #e64a24;
+  --chart-2: #4a4740;
+  --chart-3: #8a8579;
+  --chart-4: #f29a7f;
+  --chart-5: #c9c3b6;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
-}
+  --signal: #ff6b47;
 
-/* Brand accent + chart tokens (reference dataviz palette; dark steps are selected, not flipped) */
-:root {
-  --primary: oklch(0.47 0.2 275);
-  --primary-foreground: oklch(0.985 0 0);
-  --ring: oklch(0.6 0.15 275);
-  --sidebar-primary: oklch(0.47 0.2 275);
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --chart-grid: oklch(0.922 0 0);
-  --chart-axis: oklch(0.556 0 0);
-}
-.dark {
-  --primary: oklch(0.68 0.16 275);
-  --primary-foreground: oklch(0.16 0.02 275);
-  --ring: oklch(0.6 0.15 275);
-  --series-1: #3987e5;
-  --series-2: #d95926;
-  --chart-grid: oklch(1 0 0 / 8%);
-  --chart-axis: oklch(0.708 0 0);
+  --background: #0f0f0d;
+  --foreground: #f4f1e9;
+  --card: #171714;
+  --card-foreground: #f4f1e9;
+  --popover: #1c1c19;
+  --popover-foreground: #f4f1e9;
+  --primary: #ff5a33;
+  --primary-foreground: #0f0f0d;
+  --secondary: #24241f;
+  --secondary-foreground: #f4f1e9;
+  --muted: #22221e;
+  --muted-foreground: #a39f95;
+  --accent: #26261f;
+  --accent-foreground: #f4f1e9;
+  --destructive: #f2617f;
+  --border: rgb(244 241 233 / 10%);
+  --input: rgb(244 241 233 / 15%);
+  --ring: #ff5a33;
+
+  --sidebar: #131311;
+  --sidebar-foreground: #f4f1e9;
+  --sidebar-primary: #ff5a33;
+  --sidebar-primary-foreground: #0f0f0d;
+  --sidebar-accent: #22221e;
+  --sidebar-accent-foreground: #f4f1e9;
+  --sidebar-border: rgb(244 241 233 / 9%);
+  --sidebar-ring: #ff5a33;
+
+  --series-1: #ff5a33;
+  --series-2: #d8d3c7;
+  --chart-grid: rgb(244 241 233 / 8%);
+  --chart-axis: #a39f95;
+  --chart-1: #ff5a33;
+  --chart-2: #d8d3c7;
+  --chart-3: #8a8579;
+  --chart-4: #b8401f;
+  --chart-5: #4a4740;
 }
 
 @layer base {
@@ -147,5 +156,32 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/* Motion. Only opacity and transform are animated: the compositor runs them at the display's refresh rate
+   (60/120/144 Hz) without re-laying out the page, so they stay smooth even on long tables. */
+@keyframes page-in {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes label-in {
+  from { opacity: 0; transform: translate3d(-4px, 0, 0); }
+  to { opacity: 1; transform: none; }
+}
+@utility animate-page-in {
+  animation: page-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@utility animate-label-in {
+  animation: label-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Honour the OS "reduce motion" / "show animations" setting */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
   }
 }

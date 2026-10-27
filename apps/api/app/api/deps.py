@@ -1,3 +1,4 @@
+import secrets
 from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, Request, status
@@ -26,7 +27,7 @@ def current_session(request: Request, db: Session = Depends(get_db)) -> UserSess
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Not authenticated")
     if request.method not in SAFE_METHODS:
         header = request.headers.get("x-csrf-token")
-        if not header or header != sess.csrf_token:
+        if not header or not secrets.compare_digest(header, sess.csrf_token):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "CSRF token missing or invalid")
     return sess
 

@@ -109,7 +109,7 @@ export default function CompanyDetailPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Leads at {c.name}</CardTitle>
+            <CardTitle>Prospects at {c.name}</CardTitle>
           </CardHeader>
           <CardContent>
             {contacts.isPending ? (
@@ -117,13 +117,13 @@ export default function CompanyDetailPage() {
             ) : contacts.isError ? (
               <ErrorState error={contacts.error} onRetry={() => contacts.refetch()} />
             ) : contacts.data.length === 0 ? (
-              <EmptyState icon={Users} title="No leads linked to this company" />
+              <EmptyState icon={Users} title="No prospects linked to this company" />
             ) : (
               <ul className="divide-y text-sm">
                 {contacts.data.map((p) => (
                   <li key={p.id} className="flex items-center gap-3 py-2">
                     <div className="min-w-0 flex-1">
-                      <Link href={`/leads/${p.id}`} className="font-medium hover:underline">
+                      <Link href={`/prospects/${p.id}`} className="font-medium hover:underline">
                         {fullName(p)}
                       </Link>
                       <div className="truncate text-xs text-muted-foreground">{[p.job_title, p.email].filter(Boolean).join(" · ")}</div>
@@ -149,7 +149,7 @@ export default function CompanyDetailPage() {
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title={`Delete ${c.name}?`}
-        description="Its leads are kept and unlinked from the company."
+        description="Its prospects are kept and unlinked from the company."
         confirmLabel="Delete"
         destructive
         pending={remove.isPending}

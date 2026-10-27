@@ -118,7 +118,7 @@ export default function OverviewPage() {
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardTitle>Lead pipeline</CardTitle>
+            <CardTitle>Prospect pipeline</CardTitle>
           </CardHeader>
           <CardContent>
             <Funnel stages={d.funnel} />
@@ -135,7 +135,7 @@ export default function OverviewPage() {
                 icon={Mail}
                 title="No mailboxes connected"
                 action={
-                  <Link href="/email-accounts" className="text-sm font-medium text-primary hover:underline">
+                  <Link href="/email-accounts" className="text-sm font-medium text-signal hover:underline">
                     Connect a mailbox
                   </Link>
                 }
@@ -200,7 +200,7 @@ export default function OverviewPage() {
                 {d.recent_activity.map((a) => (
                   <li key={a.id} className="flex items-start gap-3 py-2">
                     <div className="min-w-0 flex-1">
-                      <Link href={`/leads/${a.contact_id}`} className="font-medium hover:underline">
+                      <Link href={`/prospects/${a.contact_id}`} className="font-medium hover:underline">
                         {a.contact}
                       </Link>
                       <p className="truncate text-xs text-muted-foreground">{a.summary}</p>

@@ -22,8 +22,11 @@ export function shortDate(iso: string | null | undefined) {
 export const num = (n: number | null | undefined) => (n ?? 0).toLocaleString();
 export const pct = (n: number | null | undefined) => `${(n ?? 0).toFixed(1)}%`;
 
+// Display names that differ from the stored value (prospect statuses are stored as lead statuses)
+const LABELS: Record<string, string> = { new_lead: "New" };
+
 export function humanize(s: string) {
-  return s.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+  return LABELS[s] ?? s.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
 export const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];

@@ -92,9 +92,9 @@ export default function LeadDetailPage() {
   const remove = useMutation({
     mutationFn: () => api(`/api/contacts/${id}`, { method: "DELETE" }),
     onSuccess: () => {
-      toast.success("Lead deleted");
+      toast.success("Prospect deleted");
       qc.invalidateQueries({ queryKey: ["contacts"] });
-      router.replace("/leads");
+      router.replace("/prospects");
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
@@ -117,8 +117,8 @@ export default function LeadDetailPage() {
 
   return (
     <>
-      <Link href="/leads" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="size-4" /> Leads
+      <Link href="/prospects" className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-4" /> Prospects
       </Link>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
@@ -196,8 +196,8 @@ export default function LeadDetailPage() {
       <ConfirmDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
-        title="Delete this lead?"
-        description="The lead is removed from all campaigns and any pending sends are cancelled."
+        title="Delete this prospect?"
+        description="The prospect is removed from all campaigns and any pending sends are cancelled."
         confirmLabel="Delete"
         destructive
         pending={remove.isPending}

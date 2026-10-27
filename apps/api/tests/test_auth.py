@@ -80,3 +80,42 @@ def test_security_headers(client):
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["x-frame-options"] == "DENY"
     assert "no-store" in r.headers["cache-control"]
+
+
+def test_csrf_token_required_for_writes(app):
+    make_user()
+    c = TestClient(app)
+    assert c.post("/api/auth/login", json={"email": "admin@trace.studio", "password": "Sup3rSecretPass!"}).status_code == 200
+    assert c.get("/api/contacts").status_code == 200  # reads need no token
+    assert c.post("/api/contacts", json={"email": "x@example.com"}).status_code == 403
+    assert c.post("/api/contacts", json={"email": "x@example.com"}, headers={"X-CSRF-Token": "wrong"}).status_code == 403
+
+
+def test_password_change_attempts_are_limited(client, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "login_rate_limit_per_minute", 3)
+    body = {"current_password": "not-it", "new_password": "AnotherGood123"}
+    codes = [client.post("/api/auth/password", json=body).status_code for _ in range(4)]
+    assert codes == [400, 400, 400, 429]
+    assert client.post("/api/auth/password", json={**body, "current_password": "x" * 300}).status_code == 422
+
+
+def test_user_update_ignores_nulls_and_rejects_bad_ids(client):
+    uid = client.post("/api/auth/users", json={"email": "m3@trace.studio", "password": "GoodPassword123"}).json()["id"]
+    r = client.patch(f"/api/auth/users/{uid}", json={"role": None, "is_active": None, "full_name": "Mo"})
+    assert r.status_code == 200 and r.json()["role"] == "member" and r.json()["is_active"] is True
+    assert r.json()["full_name"] == "Mo"
+    assert client.patch("/api/auth/users/not-a-uuid", json={"full_name": "x"}).status_code == 422
+
+
+def test_api_docs_hidden_in_production(monkeypatch):
+    from app.core.config import get_settings
+    from app.main import create_app
+
+    s = get_settings()
+    assert TestClient(create_app()).get("/api/openapi.json").status_code == 200  # available in development
+    monkeypatch.setattr(s, "app_env", "production")
+    monkeypatch.setattr(s, "cookie_secure", True)
+    prod = TestClient(create_app())
+    assert prod.get("/api/docs").status_code == 404 and prod.get("/api/openapi.json").status_code == 404

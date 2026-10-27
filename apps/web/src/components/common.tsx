@@ -139,6 +139,21 @@ const STATUS_TONE: Record<string, string> = {
   won: "bg-emerald-600/15 text-emerald-800 dark:text-emerald-300",
   lost: "bg-red-500/12 text-red-700 dark:text-red-400",
   not_interested: "bg-muted text-muted-foreground",
+  // enrollment / queue states
+  bounced: "bg-red-500/12 text-red-700 dark:text-red-400",
+  unsubscribed: "bg-muted text-muted-foreground",
+  removed: "bg-muted text-muted-foreground",
+  queued: "bg-violet-500/12 text-violet-700 dark:text-violet-400",
+  sending: "bg-sky-500/12 text-sky-700 dark:text-sky-400",
+  sent: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
+  cancelled: "bg-muted text-muted-foreground",
+  // reply intent
+  positive: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
+  neutral: "bg-muted text-muted-foreground",
+  negative: "bg-red-500/12 text-red-700 dark:text-red-400",
+  meeting: "bg-violet-500/12 text-violet-700 dark:text-violet-400",
+  not_now: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+  wrong_person: "bg-muted text-muted-foreground",
   // verification
   valid: "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
   risky: "bg-amber-500/15 text-amber-700 dark:text-amber-400",

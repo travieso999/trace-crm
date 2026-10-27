@@ -16,6 +16,15 @@ const nextConfig: NextConfig = {
       },
     },
   },
+  // Renamed pages keep their old links and bookmarks working
+  async redirects() {
+    return [
+      { source: "/pipeline", destination: "/opportunities", permanent: true },
+      // Leads were renamed Prospects
+      { source: "/leads", destination: "/prospects", permanent: true },
+      { source: "/leads/:path*", destination: "/prospects/:path*", permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${API_URL}/api/:path*` },
@@ -31,6 +40,9 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          // no framing, no plugins, no <base> hijack, forms only post back to this app
+          { key: "Content-Security-Policy", value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
         ],
       },
     ];

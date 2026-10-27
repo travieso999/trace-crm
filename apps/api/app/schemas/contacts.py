@@ -119,6 +119,9 @@ class CsvPreviewOut(BaseModel):
     total_rows: int
     suggested_mapping: dict[str, str]
     fields: list[str]
+    format: str = "csv"
+    sheet: str | None = None
+    previous_import: dict | None = None  # same file (sha256) already imported
 
 
 class CsvImportIn(BaseModel):
@@ -136,13 +139,29 @@ class CsvRowError(BaseModel):
     error: str
 
 
+class CsvRowReport(BaseModel):
+    row: int
+    email: str | None
+    first_name: str | None
+    last_name: str | None
+    company_name: str | None
+    source_name: str | None
+    status: str  # new|update|existing_skipped|duplicate_in_file|suppressed|invalid_email|missing_email|error
+    warnings: list[str]
+
+
 class CsvImportOut(BaseModel):
     created: int
     updated: int
     skipped_duplicates: int
     skipped_suppressed: int
     invalid: int
+    missing_fields: int = 0
     errors: list[CsvRowError]
+    rows: list[CsvRowReport] = []
+    rows_truncated: bool = False
+    contact_ids: list[uuid.UUID] = []  # imported/updated leads (empty for dry runs)
+    previous_import: dict | None = None
     dry_run: bool
 
 

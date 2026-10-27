@@ -26,6 +26,7 @@ from app.schemas.contacts import (
     TagOut,
 )
 from app.services import campaigns as campaign_service
+from app.services import notes as note_service
 from app.services.contacts import (
     IMPORT_FIELDS,
     apply_fields,
@@ -36,7 +37,15 @@ from app.services.contacts import (
     set_lead_status,
     suppressed_set,
 )
-from app.services.csv_import import CsvError, export_contacts_csv, import_rows, parse_csv, suggest_mapping
+from app.services.csv_import import (
+    CsvError,
+    export_contacts_csv,
+    file_fingerprint,
+    import_rows,
+    parse_upload,
+    previous_import,
+    suggest_mapping,
+)
 from app.services.normalize import InvalidEmail, normalize_email
 
 router = APIRouter(prefix="/api/contacts", tags=["contacts"])
@@ -145,7 +154,7 @@ def export_contacts(
     return Response(
         export_contacts_csv(contacts),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="contacts-{utcnow():%Y%m%d}.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="prospects-{utcnow():%Y%m%d}.csv"'},
     )
 
 
@@ -243,10 +252,10 @@ def add_note(contact_id: uuid.UUID, body: dict, user: User = Depends(writer), db
         raise HTTPException(422, "Note text is required (max 10,000 characters)")
     if not db.get(Contact, contact_id):
         raise HTTPException(404, "Contact not found")
-    act = CrmActivity(contact_id=contact_id, user_id=user.id, type="note", summary=text, data={})
-    db.add(act)
+    note = note_service.create(db, contact_id, text, user)  # a real note (editable, with history) + timeline entry
     db.commit()
-    return act
+    return ActivityOut(id=note.id, type="note", summary=note.body, data={"note_id": str(note.id)},
+                       created_at=note.created_at, user_id=user.id)
 
 
 @router.post("/bulk", response_model=BulkResult)
@@ -262,7 +271,7 @@ def bulk_action(body: BulkContactAction, request: Request, user: User = Depends(
         from app.models.crm import LEAD_STATUSES
 
         if body.value not in LEAD_STATUSES:
-            raise HTTPException(422, "Invalid lead status")
+            raise HTTPException(422, "Invalid prospect status")
         for c in contacts:
             if set_lead_status(db, c, body.value, user, reason="bulk"):
                 n += 1
@@ -299,8 +308,10 @@ def bulk_action(body: BulkContactAction, request: Request, user: User = Depends(
 async def _read_upload(file: UploadFile) -> bytes:
     limit = get_settings().csv_max_bytes
     name = (file.filename or "").lower()
-    if not name.endswith((".csv", ".txt", ".tsv")):
-        raise HTTPException(415, "Only .csv files are accepted")
+    if name.endswith(".xls"):
+        raise HTTPException(415, "Old .xls files aren't supported: save the sheet as .xlsx or .csv")
+    if not name.endswith((".csv", ".txt", ".tsv", ".xlsx")):
+        raise HTTPException(415, "Only .csv and .xlsx files are accepted")
     data = await file.read(limit + 1)
     if len(data) > limit:
         raise HTTPException(413, f"File exceeds {limit // (1024 * 1024)} MB limit")
@@ -308,10 +319,10 @@ async def _read_upload(file: UploadFile) -> bytes:
 
 
 @router.post("/import/preview", response_model=CsvPreviewOut)
-async def import_preview(file: UploadFile = File(...), _: User = Depends(writer)):
+async def import_preview(file: UploadFile = File(...), _: User = Depends(writer), db: Session = Depends(get_db)):
     raw = await _read_upload(file)
     try:
-        headers, rows = parse_csv(raw, get_settings().csv_max_rows)
+        headers, rows, meta = parse_upload(file.filename or "", raw, get_settings().csv_max_rows)
     except CsvError as exc:
         raise HTTPException(422, str(exc)) from exc
     return CsvPreviewOut(
@@ -320,6 +331,9 @@ async def import_preview(file: UploadFile = File(...), _: User = Depends(writer)
         total_rows=len(rows),
         suggested_mapping=suggest_mapping(headers),
         fields=IMPORT_FIELDS,
+        format=meta["format"],
+        sheet=meta["sheet"],
+        previous_import=previous_import(db, file_fingerprint(raw)),
     )
 
 
@@ -337,7 +351,7 @@ async def import_commit(
         raise HTTPException(422, f"Invalid import options: {exc}") from exc
     raw = await _read_upload(file)
     try:
-        headers, rows = parse_csv(raw, get_settings().csv_max_rows)
+        headers, rows, _meta = parse_upload(file.filename or "", raw, get_settings().csv_max_rows)
         result, touched = import_rows(
             db, headers, rows, opts.mapping, duplicate_strategy=opts.duplicate_strategy, tags=opts.tags,
             source=opts.source, user=user, dry_run=opts.dry_run,
@@ -353,12 +367,15 @@ async def import_commit(
     except Exception:
         db.rollback()
         raise
+    sha = file_fingerprint(raw)
+    result["previous_import"] = previous_import(db, sha)
     if opts.dry_run:
         db.rollback()
     else:
         audit(db, user, "contacts.imported", "contact", None, request, created=result["created"],
-              updated=result["updated"], filename=file.filename)
+              updated=result["updated"], filename=file.filename, sha256=sha)
         db.commit()
+        result["contact_ids"] = touched
     return CsvImportOut(**result)
 
 

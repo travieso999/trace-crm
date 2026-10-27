@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Company, Contact, CrmActivity, SuppressionEntry, Tag, User
+from app.models.base import utcnow
 from app.services.normalize import (
     clean,
     domain_of,
@@ -18,7 +19,8 @@ TEXT_FIELDS = {
     "job_title": 200, "linkedin_url": 500, "notes": 20000, "source": 120,
 }
 # Fields a CSV column can be mapped to
-IMPORT_FIELDS = ["email", *TEXT_FIELDS.keys(), "website", "state", "timezone", "tags"]
+# "full_name" is import-only: split into first/last (original kept as custom field source_name)
+IMPORT_FIELDS = ["email", "full_name", *TEXT_FIELDS.keys(), "website", "state", "timezone", "tags"]
 
 
 def log_activity(db: Session, contact_id: uuid.UUID, type_: str, summary: str, user: User | None = None, **data) -> None:
@@ -49,9 +51,11 @@ def get_or_create_company(db: Session, name: str | None, website: str | None, *,
         company = db.scalar(
             select(Company).where(func.lower(Company.name) == name.strip().lower(), Company.deleted_at.is_(None))
         )
-    if company is None and (name or domain):
+    # Only a real name creates a company: a website alone links to an existing company but never invents one
+    # (a domain-named company would otherwise surface as {{company_name}} in emails).
+    if company is None and name and name.strip():
         company = Company(
-            name=(name or domain or "").strip()[:300],
+            name=name.strip()[:300],
             website=website,
             domain=domain,
             state=state,
@@ -119,18 +123,37 @@ def set_lead_status(db: Session, contact: Contact, status: str, user: User | Non
     contact.lead_status = status
     log_activity(db, contact.id, "stage_change", f"Stage changed from {old} to {status}", user, old=old, new=status,
                  reason=reason)
+    _follow_status_on_board(db, contact, status)
     return True
+
+
+def _follow_status_on_board(db: Session, contact: Contact, status: str) -> None:
+    """A card placed in a stage linked to a lead status follows status changes (it falls back to the stage linked to
+    the new status); a card in a stage with no link stays where the user put it."""
+    from app.models import CrmOpportunity, PipelineStage
+
+    opp = db.scalar(select(CrmOpportunity).where(CrmOpportunity.contact_id == contact.id))
+    if opp is None:
+        return
+    stage = db.get(PipelineStage, opp.stage_id) if opp.stage_id else None
+    if stage is not None and stage.lead_status and stage.lead_status != status:
+        opp.stage_id = None
+    if status in ("won", "lost", "not_interested"):
+        opp.status = "won" if status == "won" else "lost"
+        opp.closed_at = opp.closed_at or utcnow()
 
 
 def template_variables(contact: Contact) -> dict[str, str]:
     """Variables available to templates for this contact. Values may be empty strings."""
     company = contact.company
+    # Older imports could name a company after its domain; that is not a real company name, so never mail it.
+    company_real_name = company.name if company and company.name and company.name != company.domain else ""
     vars_ = {
         "first_name": contact.first_name or "",
         "last_name": contact.last_name or "",
         "full_name": " ".join(p for p in (contact.first_name, contact.last_name) if p),
         "email": contact.email,
-        "company_name": contact.company_name or (company.name if company else "") or "",
+        "company_name": contact.company_name or company_real_name,
         "city": contact.city or (company.city if company else "") or "",
         "state": contact.state or (company.state if company else "") or "",
         "website": contact.website or (company.website if company else "") or "",

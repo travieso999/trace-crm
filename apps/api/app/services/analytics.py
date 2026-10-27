@@ -23,6 +23,7 @@ from app.models import (
 from app.models.base import utcnow
 from app.models.crm import LEAD_STATUSES
 from app.services import app_settings
+from app.services.inbound import current_error
 from app.services.scheduling import _tz, start_of_local_day
 
 EVENT_KEYS = ["attempted", "accepted", "failed", "bounced", "replied", "positive_reply", "negative_reply",
@@ -138,7 +139,7 @@ def mailbox_health(db: Session) -> list[dict]:
         out.append({
             "id": str(m.id), "email": m.email, "provider": m.provider, "status": m.status,
             "sent_today": sent_count(db, m.id, since), "daily_limit": m.daily_limit,
-            "last_error": m.last_error, "circuit_open": bool(m.circuit_open_until and m.circuit_open_until > now),
+            "last_error": current_error(m), "circuit_open": bool(m.circuit_open_until and m.circuit_open_until > now),
             "last_synced_at": m.last_synced_at.isoformat() if m.last_synced_at else None,
         })
     return out

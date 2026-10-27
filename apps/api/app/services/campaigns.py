@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.models import (
     AiPersonalization,
     Campaign,
@@ -18,6 +19,7 @@ from app.models import (
     User,
 )
 from app.models.base import utcnow
+from app.providers import send_block_reason
 from app.services import app_settings
 from app.services.contacts import log_activity, template_variables
 from app.services.rendering import MissingVariables, render_string
@@ -59,16 +61,31 @@ def preflight(db: Session, campaign: Campaign) -> list[str]:
             problems.append("Step 1 needs a subject line")
         if s.position > 1 and not s.reply_in_thread and not s.subject.strip():
             problems.append(f"Step {s.position} is sent as a new thread and needs a subject")
-    usable = [m for m in campaign.mailboxes if m.status == "connected"]
-    if not usable:
+    connected = [m for m in campaign.mailboxes if m.status == "connected"]
+    usable = [m for m in connected if send_block_reason(m, "campaign") is None]
+    if not connected:
         problems.append("Assign at least one connected email account")
+    elif not usable:
+        problems.append(send_block_reason(connected[0], "campaign") + " — campaigns can only use sandbox mailboxes")
+    elif get_settings().real_sending == "test_only" and any(m.provider != "sandbox" for m in usable):
+        allow = get_settings().test_recipient_allowlist or {""}  # empty allowlist: every lead is outside it
+        outside = db.scalar(
+            select(func.count()).select_from(CampaignContact).join(Contact, Contact.id == CampaignContact.contact_id)
+            .where(CampaignContact.campaign_id == campaign.id, CampaignContact.status == "active",
+                   func.lower(Contact.email).not_in(allow))
+        ) or 0
+        if outside:
+            problems.append(
+                f"Test-only mode (REAL_SENDING=test_only): {outside} enrolled prospect(s) are not in "
+                "ALLOWED_TEST_RECIPIENTS. A real mailbox can only send this campaign to allow-listed test addresses"
+            )
     active = db.scalar(
         select(func.count()).select_from(CampaignContact).where(
             CampaignContact.campaign_id == campaign.id, CampaignContact.status == "active"
         )
     )
     if not active:
-        problems.append("Enroll at least one eligible lead")
+        problems.append("Enroll at least one eligible prospect")
     if campaign.require_approved_personalization and active:
         missing = db.scalar(
             select(func.count()).select_from(CampaignContact).where(
@@ -80,7 +97,7 @@ def preflight(db: Session, campaign: Campaign) -> list[str]:
             )
         )
         if missing:
-            problems.append(f"{missing} enrolled lead(s) have no approved personalization")
+            problems.append(f"{missing} enrolled prospect(s) have no approved personalization")
     return problems
 
 
@@ -201,7 +218,7 @@ def maybe_complete(db: Session, campaign: Campaign) -> bool:
 
 def enroll_contacts(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID], user: User | None) -> dict:
     if campaign.status in ("completed", "stopped") or campaign.archived_at:
-        raise CampaignError("Cannot add leads to a finished or archived campaign")
+        raise CampaignError("Cannot add prospects to a finished or archived campaign")
     ids = list(dict.fromkeys(contact_ids))
     if not ids:
         return {"enrolled": 0, "skipped_existing": 0, "skipped_suppressed": 0, "skipped_invalid": 0}

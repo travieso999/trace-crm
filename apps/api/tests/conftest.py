@@ -88,7 +88,16 @@ def _clean_db():
             "select tablename from pg_tables where schemaname='public'")) if r[0] not in TABLES_TO_KEEP]
         if tables:
             conn.execute(text("TRUNCATE " + ", ".join(f'"{t}"' for t in tables) + " RESTART IDENTITY CASCADE"))
+        _seed_stages(conn)  # reference data the migration seeds
     engine.dispose()
+
+
+def _seed_stages(conn):
+    from app.services.opportunities import DEFAULT_STAGES
+
+    for i, (status, name, color) in enumerate(DEFAULT_STAGES):
+        conn.execute(text("INSERT INTO pipeline_stages (id, name, color, position, lead_status) "
+                          "VALUES (gen_random_uuid(), :n, :c, :p, :s)"), {"n": name, "c": color, "p": i, "s": status})
 
 
 @pytest.fixture

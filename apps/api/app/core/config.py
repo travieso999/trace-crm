@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(".env", "../../.env"), extra="ignore")
 
     app_env: str = "development"  # development | test | production
-    app_name: str = "Trace Studio Outreach"
+    app_name: str = "Trace CRM"
     log_level: str = "INFO"
 
     # Public URL the browser uses (used for OAuth redirects and unsubscribe links)
@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # OAuth providers (optional)
     google_client_id: str | None = None
     google_client_secret: str | None = None
+    # Defaults to {PUBLIC_URL}/api/email-accounts/oauth/google/callback; must match Google Cloud Console exactly
+    google_redirect_uri: str | None = None
+
+    # Real (non-sandbox) sending: "disabled" (default) | "test_only" (only allow-listed test emails) | "enabled".
+    # Reply sync from connected mailboxes works in every mode.
+    real_sending: str = "disabled"
     microsoft_client_id: str | None = None
     microsoft_client_secret: str | None = None
     microsoft_tenant: str = "common"
@@ -57,12 +63,37 @@ class Settings(BaseSettings):
 
     allowed_test_recipients: str = ""  # comma separated; test sends restricted to these + users
 
+    # Task-reminder emails (optional). A separate SMTP channel, never the campaign mailboxes: it only ever writes to
+    # the notification address in Settings → Notifications. Off unless host and from address are set.
+    notify_smtp_host: str | None = None
+    notify_smtp_port: int = 587
+    notify_smtp_username: str | None = None
+    notify_smtp_password: str | None = None
+    notify_smtp_from: str | None = None
+    notify_smtp_starttls: bool = True
+
     @field_validator("app_env")
     @classmethod
     def _env(cls, v: str) -> str:
         if v not in {"development", "test", "production"}:
             raise ValueError("APP_ENV must be development, test or production")
         return v
+
+    @field_validator("real_sending")
+    @classmethod
+    def _real_sending(cls, v: str) -> str:
+        v = v.strip().lower()
+        if v not in {"disabled", "test_only", "enabled"}:
+            raise ValueError("REAL_SENDING must be disabled, test_only or enabled")
+        return v
+
+    @property
+    def google_oauth_redirect_uri(self) -> str:
+        return self.google_redirect_uri or f"{self.public_url.rstrip('/')}/api/email-accounts/oauth/google/callback"
+
+    @property
+    def google_oauth_configured(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret and self.token_encryption_keys)
 
     @property
     def is_production(self) -> bool:
@@ -80,6 +111,10 @@ class Settings(BaseSettings):
             return self.redis_url
         # Dev fallback: Postgres-backed broker (kombu SQLAlchemy transport) when Redis is absent
         return "sqla+" + self.database_url
+
+    @property
+    def notify_email_configured(self) -> bool:
+        return bool(self.notify_smtp_host and self.notify_smtp_from)
 
     @property
     def test_recipient_allowlist(self) -> set[str]:

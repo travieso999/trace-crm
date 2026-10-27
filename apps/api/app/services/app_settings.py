@@ -26,7 +26,9 @@ DEFAULTS: dict[str, dict] = {
         "timezone": "America/New_York",
     },
     "ai": {"enabled": True, "model": "", "daily_token_budget": 200_000, "max_retries": 2, "classify_replies": True},
-    "notifications": {"notify_on_reply": True, "notification_email": "", "notify_on_mailbox_error": True},
+    "notifications": {"notify_on_reply": True, "notification_email": "", "notify_on_mailbox_error": True,
+                      "email_task_reminders": True},
+    "crm": {"task_types": ["Call", "Email", "Follow-up", "Meeting", "Proposal", "Payment Reminder", "Other"]},
     "security": {"session_ttl_hours": 12},
     "retention": {"received_body_days": 365, "audit_log_days": 730, "sandbox_outbox_days": 14},
     "backup": {"schedule": "daily 03:00 UTC", "retention_days": 14, "location": "./backups"},
@@ -65,6 +67,15 @@ def validate_section(key: str, value: dict) -> dict:
         from app.schemas.mail import ScheduleIn
 
         value["schedule"] = ScheduleIn.model_validate(value["schedule"]).model_dump()
+    if key == "crm" and "task_types" in value:
+        types = [str(t).strip() for t in value["task_types"] or [] if str(t).strip()]
+        if not types or len(types) > 30 or any(len(t) > 40 for t in types):
+            raise SettingsError("Task types: 1-30 names of up to 40 characters")
+        value["task_types"] = list(dict.fromkeys(types))
+    if key == "notifications" and value.get("notification_email"):
+        from app.services.normalize import normalize_email
+
+        value["notification_email"] = normalize_email(value["notification_email"])
     if key == "ai":
         if int(value.get("daily_token_budget", 1)) < 0 or int(value.get("max_retries", 0)) not in range(0, 6):
             raise SettingsError("Invalid AI limits")

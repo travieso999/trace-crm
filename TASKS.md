@@ -7,12 +7,18 @@ Legend: [x] done & verified · [~] implemented, awaiting external verification �
 - [x] docs/ARCHITECTURE.md, docs/DATABASE.md, docs/IMPLEMENTATION_PLAN.md, TASKS.md
 
 ## Phase B — Backend core
-- [ ] Config, logging, security primitives
-- [ ] Models + initial Alembic migration
-- [ ] Auth (login/logout/me, sessions, CSRF, RBAC, rate limit)
-- [ ] Contacts CRUD, search/filter, bulk, CSV import/export
-- [ ] Companies CRUD
-- [ ] Dashboard API
+- [x] Config, logging, security primitives
+- [x] Models + initial Alembic migration
+- [x] Auth (login/logout/me, sessions, CSRF, RBAC, rate limit)
+- [x] Contacts CRUD, search/filter, bulk, CSV import/export
+- [x] Companies CRUD
+- [x] Dashboard API
+- [x] Verified 2026-10-26: pytest 19 passed (real Postgres), alembic upgrade/downgrade/upgrade + `alembic check` clean, ruff clean
+
+## Phase C — Frontend
+- [~] Next.js scaffold: app shell, login page, API client, types, shadcn/ui components (in progress)
+- [ ] Dashboard, leads, companies pages
+- [ ] Remaining pages
 
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).

@@ -1,10 +1,12 @@
 """Fixed-window rate limiter. Redis-backed when REDIS_URL is set, in-process otherwise (single API process)."""
 
+import logging
 import threading
 import time
 
 from app.core.config import get_settings
 
+log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _memory: dict[str, tuple[int, float]] = {}
 _redis = None
@@ -41,7 +43,8 @@ def hit(key: str, limit: int, window_seconds: int = 60) -> bool:
             count = pipe.execute()[0]
             return int(count) <= limit
         except Exception:
-            pass  # fail open to memory limiter rather than locking everyone out
+            # fail open to memory limiter rather than locking everyone out
+            log.warning("redis rate limiter unavailable, using in-process fallback", exc_info=True)
     with _lock:
         now = time.time()
         for k in [k for k, (_, exp) in _memory.items() if exp < now]:

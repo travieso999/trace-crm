@@ -18,9 +18,10 @@ os.environ.setdefault("API_RATE_LIMIT_PER_MINUTE", "100000")
 os.environ.setdefault("SANDBOX_OUTBOX_DIR", str(pathlib.Path(tempfile.gettempdir()) / "ts_outreach_test_outbox"))
 
 import pytest  # noqa: E402
+from sqlalchemy import create_engine, text  # noqa: E402
+
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
-from sqlalchemy import create_engine, text  # noqa: E402
 
 API_DIR = pathlib.Path(__file__).resolve().parent.parent
 

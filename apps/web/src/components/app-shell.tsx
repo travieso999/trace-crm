@@ -140,31 +140,46 @@ function ThemeMenuItems() {
   );
 }
 
+// Sidebar collapsed flag persisted in localStorage; in-memory fallback when storage is unavailable.
+const COLLAPSED_KEY = "ts-sidebar-collapsed";
+const collapsedListeners = new Set<() => void>();
+let collapsedMemory = false;
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSED_KEY) === "1";
+  } catch {
+    return collapsedMemory;
+  }
+}
+
+function writeCollapsed(value: boolean) {
+  collapsedMemory = value;
+  try {
+    localStorage.setItem(COLLAPSED_KEY, value ? "1" : "0");
+  } catch {
+    /* storage unavailable */
+  }
+  collapsedListeners.forEach((l) => l());
+}
+
+function subscribeCollapsed(listener: () => void) {
+  collapsedListeners.add(listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    collapsedListeners.delete(listener);
+    window.removeEventListener("storage", listener);
+  };
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const me = useMe();
   const router = useRouter();
   const qc = useQueryClient();
-  const [collapsed, setCollapsed] = React.useState(false);
+  const collapsed = React.useSyncExternalStore(subscribeCollapsed, readCollapsed, () => false);
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
-  React.useEffect(() => {
-    try {
-      setCollapsed(localStorage.getItem("ts-sidebar-collapsed") === "1");
-    } catch {
-      /* storage unavailable */
-    }
-  }, []);
-
-  const toggle = React.useCallback(() => {
-    setCollapsed((c) => {
-      try {
-        localStorage.setItem("ts-sidebar-collapsed", c ? "0" : "1");
-      } catch {
-        /* ignore */
-      }
-      return !c;
-    });
-  }, []);
+  const toggle = React.useCallback(() => writeCollapsed(!readCollapsed()), []);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

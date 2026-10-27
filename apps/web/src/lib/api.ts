@@ -69,6 +69,8 @@ export async function api<T = unknown>(
     signal: opts.signal,
   });
   if (res.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/")) {
+    // Outside React (no router here); a full load also drops the stale query cache.
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.href = `/login?next=${encodeURIComponent(window.location.pathname)}`;
   }
   if (!res.ok) {

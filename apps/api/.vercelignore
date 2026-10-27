@@ -1,0 +1,11 @@
+.env
+.env.*
+.venv
+var
+tests
+.ruff_cache
+.pytest_cache
+__pycache__
+requirements-dev.txt
+# local tooling config only; without it Vercel installs from requirements.txt (it has no dependency list)
+pyproject.toml

@@ -89,6 +89,7 @@ def create_app() -> FastAPI:
         companies,
         contacts,
         crm,
+        cron,
         dashboard,
         email_accounts,
         inbox,
@@ -100,7 +101,7 @@ def create_app() -> FastAPI:
     from app.api.routes import settings as settings_routes
 
     for module in (auth, dashboard, contacts, companies, settings_routes, email_accounts, campaigns, inbox, crm,
-                   opportunities, notifications, suppressions, analytics, unsubscribe):
+                   opportunities, notifications, suppressions, analytics, unsubscribe, cron):
         app.include_router(module.router)
     app.include_router(campaigns.templates_router)
     app.include_router(opportunities.notes_router)

@@ -1,0 +1,22 @@
+[project]
+name = "trace-studio-outreach-api"
+version = "1.0.0"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q -p no:cacheprovider"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "N"]
+ignore = ["S101", "B008", "S311", "N818"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "E501"]

@@ -1,0 +1,26 @@
+# secrets
+.env
+.env.*
+!.env.example
+apps/api/.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.ruff_cache/
+.pytest_cache/
+
+# node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+test-results/
+playwright-report/
+
+# runtime data
+var/
+backups/
+*.log

@@ -30,9 +30,16 @@ def _database_url() -> str:
     url = os.environ.get("TEST_DATABASE_URL")
     if url:
         return url
+    import importlib.util
     import logging
 
     import pgserver
+
+    # Same helper the dev DB script uses: pgserver on Windows lacks the timezone database
+    spec = importlib.util.spec_from_file_location("dev_db", API_DIR.parent.parent / "scripts" / "dev_db.py")
+    dev_db = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dev_db)
+    dev_db.ensure_timezone_data()
 
     logging.getLogger("pgserver").disabled = True
     pgdata = pathlib.Path(tempfile.gettempdir()) / "ts_outreach_pgtest"

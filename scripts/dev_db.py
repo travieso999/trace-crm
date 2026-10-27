@@ -9,6 +9,7 @@ The DATABASE_URL line in apps/api/.env is updated automatically because the port
 
 import pathlib
 import re
+import shutil
 import sys
 
 import pgserver
@@ -18,7 +19,20 @@ PGDATA = ROOT / "var" / "pgdata"
 ENV = ROOT / "apps" / "api" / ".env"
 
 
+def ensure_timezone_data() -> None:
+    """pgserver's Windows build ships without share/postgresql/timezone, so `AT TIME ZONE 'America/New_York'` fails.
+    The tzdata package carries the same compiled TZif files; copy them in once."""
+    import tzdata
+
+    target = pathlib.Path(pgserver.__file__).parent / "pginstall" / "share" / "postgresql" / "timezone"
+    if (target / "America" / "New_York").exists():
+        return
+    shutil.copytree(pathlib.Path(tzdata.__file__).parent / "zoneinfo", target, dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__init__.py", "__pycache__"))
+
+
 def main() -> None:
+    ensure_timezone_data()
     PGDATA.parent.mkdir(parents=True, exist_ok=True)
     srv = pgserver.get_server(PGDATA, cleanup_mode=None)
     if "--stop" in sys.argv:
@@ -26,7 +40,7 @@ def main() -> None:
         print("stopped")
         return
     for name in ("outreach", "outreach_test"):
-        exists = srv.psql(f"select 1 from pg_database where datname='{name}';")
+        exists = srv.psql(f"select 1 from pg_database where datname='{name}';")  # noqa: S608 - fixed names above
         if "1 row" not in exists:
             srv.psql(f"create database {name};")
     base = srv.get_uri().rsplit("/", 1)[0].replace("postgresql://", "postgresql+psycopg://")

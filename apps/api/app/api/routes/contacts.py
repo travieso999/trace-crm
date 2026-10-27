@@ -8,7 +8,8 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import audit, reader, writer
+from app.api.deps import admin, audit, reader, writer
+from app.core import ratelimit
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import Campaign, CampaignContact, Contact, CrmActivity, Tag, User, contact_tags
@@ -27,6 +28,7 @@ from app.schemas.contacts import (
 )
 from app.services import campaigns as campaign_service
 from app.services import notes as note_service
+from app.services import security_alerts
 from app.services.contacts import (
     IMPORT_FIELDS,
     apply_fields,
@@ -144,12 +146,24 @@ def export_contacts(
     campaign_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
     request: Request = None,
-    user: User = Depends(reader),
+    user: User = Depends(admin),
     db: Session = Depends(get_db),
 ):
+    """Bulk export is admin-only, limited per hour, logged with its filters, and every export alerts the admins."""
+    if not ratelimit.hit(f"export:{user.id}", get_settings().export_limit_per_hour, 3600):
+        audit(db, user, "contacts.export_refused", "contact", None, request, reason="hourly limit")
+        db.commit()
+        raise HTTPException(429, "Export limit reached for this hour")
     stmt = _filtered(q, lead_status, verification_status, state, tag, campaign_id, company_id).order_by(Contact.created_at)
     contacts = list(db.scalars(stmt.limit(100_000)))
-    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts))
+    filters = {k: str(v) for k, v in {"q": q, "lead_status": lead_status, "verification_status": verification_status,
+                                      "state": state, "tag": tag, "campaign_id": campaign_id,
+                                      "company_id": company_id}.items() if v}
+    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts), filters=filters)
+    security_alerts.notify_admins(db, f"Prospects exported by {user.email}",
+                                  f"{user.email} downloaded {len(contacts)} prospect(s) as CSV"
+                                  + (f" (filters: {', '.join(f'{k}={v}' for k, v in filters.items())})." if filters
+                                     else " (all prospects)."))
     db.commit()
     return Response(
         export_contacts_csv(contacts),

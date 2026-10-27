@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState, Field, PageHeader } from "@/components/common";
 import { ScheduleEditor } from "@/components/schedule-editor";
+import { SecuritySettings } from "@/components/security-settings";
 import { useIsAdmin } from "@/components/app-shell";
 import { api, errorMessage } from "@/lib/api";
 import type { SettingsResponse } from "@/lib/types";
@@ -137,6 +138,7 @@ export default function SettingsPage() {
         </div>
       )}
       <div className="grid gap-4 lg:grid-cols-2">
+        <SecuritySettings />
         <Section name="compliance" title="Compliance" description="Required by CAN-SPAM: a real postal address and a working unsubscribe link in every email." value={s.compliance} readOnly={ro}>
           {(d, set) => (
             <>

@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +22,15 @@ class User(UUIDPk, Timestamps, Base):
     role: Mapped[str] = mapped_column(String(20), default="member")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Two-step verification (TOTP). The secret is Fernet-encrypted; it exists but is unused until enabled_at is set.
+    totp_secret_enc: Mapped[str | None] = mapped_column(Text)
+    totp_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    totp_last_step: Mapped[int | None] = mapped_column(BigInteger)  # a code is accepted once, never replayed
+    recovery_code_hashes: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+
+    @property
+    def mfa_enabled(self) -> bool:
+        return self.totp_enabled_at is not None
 
 
 class UserSession(UUIDPk, Base):
@@ -35,6 +44,7 @@ class UserSession(UUIDPk, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     user: Mapped[User] = relationship(lazy="joined")
 

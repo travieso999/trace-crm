@@ -4,13 +4,16 @@ from collections.abc import Callable
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.core import mfa, ratelimit
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import load_session
 from app.models import AuditLog, User, UserSession
+from app.services import security_alerts
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 ROLE_RANK = {"viewer": 0, "member": 1, "admin": 2}
+DENIALS_BEFORE_ALERT = 10
 
 
 def client_ip(request: Request) -> str | None:
@@ -37,12 +40,27 @@ def current_user(sess: UserSession = Depends(current_session)) -> User:
 
 
 def require_role(min_role: str) -> Callable[[User], User]:
-    def dep(user: User = Depends(current_user)) -> User:
+    def dep(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)) -> User:
         if ROLE_RANK.get(user.role, -1) < ROLE_RANK[min_role]:
+            _denied(db, user, request, min_role)
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permissions")
+        if min_role == "admin" and mfa.required_for(user) and not user.mfa_enabled:
+            raise HTTPException(status.HTTP_403_FORBIDDEN,
+                                "Turn on two-step verification (Settings → Security) to use admin features")
         return user
 
     return dep
+
+
+def _denied(db: Session, user: User, request: Request, needed: str) -> None:
+    """Permission errors are recorded; a burst of them (probing for data) alerts the admins."""
+    audit(db, user, "authz.denied", None, None, request, method=request.method, path=request.url.path, needed=needed)
+    if not ratelimit.hit(f"denied:{user.id}", DENIALS_BEFORE_ALERT, 600):
+        security_alerts.notify_admins(
+            db, f"Repeated permission errors: {user.email}",
+            f"{user.email} ({user.role}) was refused access {DENIALS_BEFORE_ALERT}+ times in 10 minutes, "
+            f"most recently {request.method} {request.url.path}.", throttle_key=f"denied:{user.id}")
+    db.commit()
 
 
 # Viewers can read; members can write; admins manage users/settings/mailboxes.

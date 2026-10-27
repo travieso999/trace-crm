@@ -23,7 +23,7 @@ from app.providers.mime import new_message_id
 from app.providers.sandbox import SandboxProvider
 from app.schemas.common import Message
 from app.schemas.mail import EmailAccountOut, EmailAccountUpdate
-from app.services import app_settings, google_oauth, inbound, sending
+from app.services import app_settings, google_oauth, inbound, security_alerts, sending
 from app.services.normalize import InvalidEmail, normalize_email
 
 logger = logging.getLogger("app.email_accounts")
@@ -181,6 +181,8 @@ def google_callback(request: Request, code: str | None = None, state: str | None
         db.flush()
         audit(db, user, "mailbox.connected" if created else "mailbox.reconnected", "email_account", account.id,
               request, provider="gmail", email=email_addr)
+        security_alerts.notify_admins(db, f"Mailbox {'connected' if created else 'reconnected'}: {email_addr}",
+                                      f"{user.email} gave Trace CRM access to the Gmail mailbox {email_addr}.")
         db.commit()
         return _back(connected="gmail", email=email_addr)
     except google_oauth.OAuthFlowError as exc:
@@ -330,6 +332,7 @@ def disconnect(account_id: uuid.UUID, request: Request, user: User = Depends(adm
     a.token_expires_at, a.sync_cursor = None, None
     db.execute(campaign_mailboxes.delete().where(campaign_mailboxes.c.email_account_id == a.id))
     audit(db, user, "mailbox.disconnected", "email_account", a.id, request, revoke_warning=warning)
+    security_alerts.notify_admins(db, f"Mailbox disconnected: {a.email}", f"{user.email} disconnected {a.email}.")
     db.commit()
     return Message(message="Mailbox disconnected" + (f". {warning}" if warning else
                                                       " and access revoked at Google" if a.provider == "gmail" else ""))

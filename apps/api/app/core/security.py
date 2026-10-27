@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -13,6 +13,7 @@ from app.models.base import utcnow
 
 # argon2-cffi defaults to Argon2id (RFC 9106 low-memory profile)
 _hasher = PasswordHasher()
+SEEN_RESOLUTION = timedelta(minutes=1)
 # Pre-computed hash used to equalise timing when the user does not exist
 _DUMMY_HASH = _hasher.hash("timing-equaliser-not-a-real-password")
 
@@ -55,10 +56,18 @@ def load_session(db: Session, token: str | None) -> UserSession | None:
     if not token:
         return None
     sess = db.scalar(select(UserSession).where(UserSession.token_hash == hash_token(token)))
-    if sess is None or sess.revoked_at is not None or sess.expires_at <= utcnow():
+    now = utcnow()
+    if sess is None or sess.revoked_at is not None or sess.expires_at <= now:
         return None
     if not sess.user.is_active:
         return None
+    seen = sess.last_seen_at or sess.created_at
+    if seen <= now - timedelta(minutes=get_settings().session_idle_minutes):
+        return None
+    if seen <= now - SEEN_RESOLUTION:  # at most one write a minute per session
+        db.execute(update(UserSession).where(UserSession.id == sess.id).values(last_seen_at=now))
+        db.commit()
+        sess.last_seen_at = now
     return sess
 
 

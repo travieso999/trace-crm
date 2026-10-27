@@ -470,10 +470,12 @@ def update_template(template_id: uuid.UUID, body: TemplateIn, user: User = Depen
 
 
 @templates_router.delete("/{template_id}", response_model=Message)
-def delete_template(template_id: uuid.UUID, user: User = Depends(writer), db: Session = Depends(get_db)):
+def delete_template(template_id: uuid.UUID, request: Request, user: User = Depends(writer),
+                    db: Session = Depends(get_db)):
     t = db.get(EmailTemplate, template_id)
     if t is None:
         raise HTTPException(404, "Template not found")
+    audit(db, user, "template.deleted", "template", t.id, request, name=t.name)
     db.delete(t)
     db.commit()
     return Message(message="Template deleted")

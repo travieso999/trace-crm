@@ -117,5 +117,7 @@ def test_api_docs_hidden_in_production(monkeypatch):
     assert TestClient(create_app()).get("/api/openapi.json").status_code == 200  # available in development
     monkeypatch.setattr(s, "app_env", "production")
     monkeypatch.setattr(s, "cookie_secure", True)
+    monkeypatch.setattr(s, "public_url", "https://crm.example.com")
+    monkeypatch.setattr(s, "database_url", "postgresql+psycopg://trace_app:Long-Random-Pass-123@db:5432/outreach")
     prod = TestClient(create_app())
     assert prod.get("/api/docs").status_code == 404 and prod.get("/api/openapi.json").status_code == 404

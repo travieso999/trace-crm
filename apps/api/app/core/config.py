@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,8 @@ class Settings(BaseSettings):
     secret_key: str = ""
 
     session_ttl_hours: int = 12
+    # A session unused for this long ends even before its TTL (an unattended, unlocked laptop)
+    session_idle_minutes: int = 120
     session_cookie_name: str = "ts_session"
     csrf_cookie_name: str = "ts_csrf"
     cookie_secure: bool = False
@@ -31,7 +34,15 @@ class Settings(BaseSettings):
     trust_proxy_headers: bool = False
 
     login_rate_limit_per_minute: int = 10
+    # Lockout: this many failed sign-ins for one email (or 3x from one IP) within the window locks it for the window
+    login_lockout_failures: int = 8
+    login_lockout_minutes: int = 15
     api_rate_limit_per_minute: int = 600
+    # Bulk prospect exports per admin per hour
+    export_limit_per_hour: int = 10
+
+    # Admins must turn on two-step verification before admin features work. Defaults to on in production.
+    require_admin_mfa: bool | None = None
 
     # OAuth providers (optional)
     google_client_id: str | None = None
@@ -100,6 +111,10 @@ class Settings(BaseSettings):
         return self.app_env == "production"
 
     @property
+    def admin_mfa_required(self) -> bool:
+        return self.is_production if self.require_admin_mfa is None else self.require_admin_mfa
+
+    @property
     def sandbox_enabled(self) -> bool:
         return not self.is_production
 
@@ -126,8 +141,16 @@ class Settings(BaseSettings):
             problems.append("TOKEN_ENCRYPTION_KEYS is not set")
         if len(self.secret_key) < 32:
             problems.append("SECRET_KEY must be at least 32 characters")
-        if self.is_production and not self.cookie_secure:
-            problems.append("COOKIE_SECURE must be true in production")
+        if self.is_production:
+            if not self.cookie_secure:
+                problems.append("COOKIE_SECURE must be true in production")
+            if not self.public_url.startswith("https://"):
+                problems.append("PUBLIC_URL must be an https:// address in production")
+            db = urlsplit(self.database_url)
+            if not db.password or db.password == "outreach" or db.username == "postgres":  # noqa: S105 - known default
+                problems.append("DATABASE_URL must use a dedicated database user with a strong password in production")
+            if not self.admin_mfa_required:
+                problems.append("REQUIRE_ADMIN_MFA must not be disabled in production")
         return problems
 
 

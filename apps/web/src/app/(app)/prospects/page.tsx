@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog, EmptyState, ErrorState, NativeSelect, PageHeader, Pagination, StatusBadge } from "@/components/common";
 import { LeadForm, toPayload } from "@/components/lead-form";
 import { EnrollDialog } from "@/components/enroll-dialog";
-import { useCanWrite } from "@/components/app-shell";
+import { useCanWrite, useIsAdmin } from "@/components/app-shell";
 import { api, download, errorMessage } from "@/lib/api";
 import { fullName, humanize, num, relTime } from "@/lib/format";
 import { LEAD_STATUSES, type Contact, type Page, type Tag } from "@/lib/types";
@@ -159,6 +159,7 @@ export default function LeadsPage() {
   const router = useRouter();
   const qc = useQueryClient();
   const canWrite = useCanWrite();
+  const isAdmin = useIsAdmin();
   const [search, setSearch] = React.useState("");
   const q = useDebounced(search.trim());
   const [filters, setFilters] = React.useState<Filters>({ lead_status: "", verification_status: "", tag: "" });
@@ -224,9 +225,11 @@ export default function LeadsPage() {
         description={list.data ? `${num(list.data.total)} ${filtered ? "matching" : "total"}` : undefined}
         actions={
           <>
-            <Button variant="outline" onClick={exportCsv}>
-              <Download /> Export
-            </Button>
+            {isAdmin && (
+              <Button variant="outline" onClick={exportCsv} title="Admins only. Every export is logged and admins are notified.">
+                <Download /> Export
+              </Button>
+            )}
             {canWrite && (
               <>
                 <Link href="/prospects/import" className={cn(buttonVariants({ variant: "outline" }))}>

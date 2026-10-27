@@ -7,6 +7,7 @@ export type User = {
   role: "admin" | "member" | "viewer";
   is_active: boolean;
   last_login_at: string | null;
+  mfa_enabled: boolean;
 };
 
 export type Tag = { id: string; name: string; color: string | null };
@@ -399,7 +400,7 @@ export type ActivityItem = { id: string; type: string; summary: string; at: stri
 
 export type AppNotification = {
   id: string;
-  kind: "task_reminder" | "task_overdue";
+  kind: "task_reminder" | "task_overdue" | "security";
   title: string;
   body: string | null;
   contact_id: string | null;

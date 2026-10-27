@@ -165,6 +165,27 @@ Legend: [x] done & verified · [~] implemented, awaiting external verification �
       (any local process can connect) — fine for a single-user dev PC, use the Docker/managed Postgres with a
       password in production
 
+## Security audit + hardening (2026-10-27, branch `security-hardening`)
+- [x] Two-step verification (TOTP + 10 single-use recovery codes, secret Fernet-encrypted, codes never replayable);
+      sign-in is password → signed 5-minute challenge → code. REQUIRE_ADMIN_MFA (default on in production) locks
+      admin routes until the admin enrols. Admins can reset a teammate's 2FA (`POST /api/auth/users/{id}/mfa/reset`)
+- [x] Lockout: 8 failed sign-ins (password or code) per email, or 24 per IP, in 15 minutes → 15-minute lock
+- [x] Sessions: 120-minute idle timeout (`sessions.last_seen_at`) on top of the 12 h TTL
+- [x] Prospect export: admin-only, 10/hour per admin, filters in the audit log, every export alerts the admins
+- [x] Security alerts to admins (Notification Center, kind `security`): lockouts, new/promoted admins, deactivations,
+      2FA off/reset, recovery-code use, exports, mailbox connect/disconnect, bursts of permission errors
+- [x] audit_logs append-only at the database (trigger: no UPDATE; DELETE only past 730 days); Settings → Security
+      shows the security log; logout, session revocation and template deletion now audited
+- [x] API rate limit also per IP (made-up cookies no longer buy a fresh allowance); /u/ pages rate limited
+- [x] Frontend CSP: scripts/styles/fonts/API calls same-origin only
+- [x] Production start refuses http PUBLIC_URL, the default/`postgres`/password-less DATABASE_URL, REQUIRE_ADMIN_MFA=false
+- [x] Backups: optional Fernet encryption (BACKUP_ENCRYPTION_KEY) with decrypt-back check; `--decrypt`
+- [x] Verified: pytest 122 passed (tests/test_security.py sweeps every route for session, role and CSRF rules),
+      ruff, tsc, eslint, production build; migration run on a restored copy of the live data; browser E2E on the
+      production build (2FA enrol + sign-in, export alert, viewer refused, email iframe under the CSP, no CSP errors)
+- [ ] Migration 5ca204ddd0e5 not yet applied to the live database (needs approval), then merge + restart
+- [ ] Least-privilege Postgres role with a password instead of the `postgres` superuser with trust auth (approval)
+
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).
 - No Microsoft / OpenAI credentials yet. Google OAuth client is set by the user in apps/api/.env (git-ignored).

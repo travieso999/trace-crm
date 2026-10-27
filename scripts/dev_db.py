@@ -21,6 +21,7 @@ import sys
 from urllib.parse import urlsplit
 
 import pgserver
+from pgserver._commands import POSTGRES_BIN_PATH
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PGDATA = ROOT / "var" / "pgdata"
@@ -108,7 +109,7 @@ def foreign_database(text: str) -> str | None:
 
 
 def stop() -> None:
-    pg_ctl = str(pgserver.POSTGRES_BIN_PATH / ("pg_ctl.exe" if os.name == "nt" else "pg_ctl"))
+    pg_ctl = str(POSTGRES_BIN_PATH /("pg_ctl.exe" if os.name == "nt" else "pg_ctl"))
     if subprocess.run([pg_ctl, "status", "-D", str(PGDATA)], capture_output=True).returncode != 0:
         print("not running")
         return

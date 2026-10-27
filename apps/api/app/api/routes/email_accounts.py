@@ -12,12 +12,14 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import admin, audit, reader
 from app.core.config import get_settings
+from app.core.crypto import CryptoError, encrypt
 from app.core.db import get_db
 from app.core.logging import log
 from app.core.security import load_session
 from app.models import Campaign, EmailAccount, SentMessage, User, campaign_mailboxes
 from app.models.base import utcnow
 from app.providers import get_provider
+from app.providers import smtp as smtp_provider
 from app.providers.base import OutgoingMessage, ProviderError, ProviderUnavailable
 from app.providers.mime import new_message_id
 from app.providers.sandbox import SandboxProvider
@@ -33,6 +35,19 @@ router = APIRouter(prefix="/api/email-accounts", tags=["email accounts"])
 class SandboxCreate(BaseModel):
     email: str = Field(max_length=320)
     display_name: str | None = Field(default=None, max_length=200)
+
+
+class SmtpConnectIn(BaseModel):
+    email: str = Field(max_length=320)
+    display_name: str | None = Field(default=None, max_length=200)
+    password: str = Field(min_length=1, max_length=500)
+    username: str | None = Field(default=None, max_length=320)  # defaults to the email address
+    preset: str = Field(default="custom", pattern="^(custom|" + "|".join(smtp_provider.PRESETS) + ")$")
+    smtp_host: str | None = Field(default=None, max_length=255)
+    smtp_port: int | None = Field(default=None, ge=1, le=65535)
+    smtp_security: str | None = Field(default=None, pattern="^(ssl|starttls)$")
+    imap_host: str | None = Field(default=None, max_length=255)
+    imap_port: int | None = Field(default=None, ge=1, le=65535)
 
 
 class TestEmailIn(BaseModel):
@@ -88,6 +103,9 @@ def providers(_: User = Depends(reader)):
                   "redirect_uri": s.google_oauth_redirect_uri, "scopes": list(google_oauth.SCOPES)},
         "microsoft": {"available": False, "configured": bool(s.microsoft_client_id and s.microsoft_client_secret),
                       "reason": "Microsoft 365 OAuth connection is not enabled yet"},
+        "smtp": {"available": bool(s.token_encryption_keys), "configured": bool(s.token_encryption_keys),
+                 "reason": None if s.token_encryption_keys else "Set TOKEN_ENCRYPTION_KEYS on the server",
+                 "presets": smtp_provider.PRESETS},
         "sandbox": {"available": s.sandbox_enabled, "configured": True,
                     "reason": None if s.sandbox_enabled else "Disabled in production",
                     "outbox_dir": s.sandbox_outbox_dir if s.sandbox_enabled else None},
@@ -228,6 +246,60 @@ def create_sandbox(body: SandboxCreate, request: Request, user: User = Depends(a
     return _out(db, [account])[0]
 
 
+@router.post("/smtp", response_model=EmailAccountOut, status_code=201)
+def connect_smtp(body: SmtpConnectIn, request: Request, user: User = Depends(admin), db: Session = Depends(get_db)):
+    """Connect (or reconnect) a mailbox by SMTP + IMAP password, e.g. Hostinger email. Both logins are checked
+    before anything is saved; the password is stored encrypted."""
+    try:
+        email_addr = normalize_email(body.email)
+    except InvalidEmail as exc:
+        raise HTTPException(422, str(exc)) from exc
+    server = dict(smtp_provider.PRESETS.get(body.preset, {}))
+    for f in ("smtp_host", "smtp_port", "smtp_security", "imap_host", "imap_port"):
+        if getattr(body, f) is not None:
+            server[f] = getattr(body, f)
+    missing = [f for f in ("smtp_host", "smtp_port", "imap_host", "imap_port") if not server.get(f)]
+    if missing:
+        raise HTTPException(422, "Missing server settings: " + ", ".join(missing))
+    server.setdefault("smtp_security", "ssl")
+    server["smtp_host"], server["imap_host"] = server["smtp_host"].strip().lower(), server["imap_host"].strip().lower()
+    server["username"] = (body.username or "").strip() or email_addr
+    try:
+        smtp_provider.SmtpImapProvider(email_addr, smtp_provider.ServerConfig.from_account(server, body.password),
+                                       send_block_reason=lambda _: None).verify()
+    except ProviderError as exc:
+        raise HTTPException(422, f"Could not sign in to the mail server: {exc}") from exc
+    try:
+        password_enc = encrypt(body.password)
+    except CryptoError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    d = app_settings.get_section(db, "defaults")
+    existing = db.scalar(select(EmailAccount).where(EmailAccount.provider == "smtp", EmailAccount.email == email_addr))
+    account = existing or EmailAccount(provider="smtp", email=email_addr)
+    if not existing or existing.status == "disconnected":
+        account.daily_limit = d.get("daily_limit_per_mailbox", 30)
+        account.min_interval_seconds = d.get("min_interval_seconds", 120)
+        account.schedule = dict(d.get("schedule") or account.schedule or {})
+        account.sync_cursor = None  # replies are read from now on
+    if body.display_name is not None or not existing:
+        account.display_name = (body.display_name or "").strip() or None
+    account.server, account.password_enc, account.status = server, password_enc, "connected"
+    account.consecutive_failures, account.circuit_open_until = 0, None
+    account.last_error = account.last_error_at = None
+    if not existing:
+        db.add(account)
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, "This mailbox already exists") from exc
+    audit(db, user, "mailbox.reconnected" if existing else "mailbox.created", "email_account", account.id, request,
+          provider="smtp", smtp_host=server["smtp_host"])
+    db.commit()
+    return _out(db, [account])[0]
+
+
 @router.get("/{account_id}", response_model=EmailAccountOut)
 def get_account(account_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
     return _out(db, [_get(db, account_id)])[0]
@@ -326,7 +398,7 @@ def disconnect(account_id: uuid.UUID, request: Request, user: User = Depends(adm
     a = _get(db, account_id)
     warning = google_oauth.revoke(a) if a.provider == "gmail" else None
     a.status = "disconnected"
-    a.access_token_enc = a.refresh_token_enc = None
+    a.access_token_enc = a.refresh_token_enc = a.password_enc = None
     a.token_expires_at, a.sync_cursor = None, None
     db.execute(campaign_mailboxes.delete().where(campaign_mailboxes.c.email_account_id == a.id))
     audit(db, user, "mailbox.disconnected", "email_account", a.id, request, revoke_warning=warning)

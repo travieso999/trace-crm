@@ -22,7 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import Base, SoftDelete, Timestamps, UUIDPk, utcnow
 from app.models.crm import Contact
 
-PROVIDERS = ("gmail", "microsoft", "sandbox")
+PROVIDERS = ("gmail", "microsoft", "sandbox", "smtp")
 MAILBOX_STATUSES = ("connected", "paused", "auth_error", "error", "disconnected")
 CAMPAIGN_STATUSES = ("draft", "scheduled", "active", "paused", "completed", "stopped", "error")
 CC_STATUSES = ("active", "replied", "completed", "unsubscribed", "bounced", "stopped", "removed", "error")
@@ -61,6 +61,10 @@ class EmailAccount(UUIDPk, Timestamps, Base):
     refresh_token_enc: Mapped[str | None] = mapped_column(Text)
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     scopes: Mapped[str | None] = mapped_column(Text)
+    # smtp provider only: {smtp_host, smtp_port, smtp_security, imap_host, imap_port, username}; the password is
+    # Fernet-encrypted like the OAuth tokens and never serialised to API responses
+    server: Mapped[dict | None] = mapped_column(JSONB)
+    password_enc: Mapped[str | None] = mapped_column(Text)
     daily_limit: Mapped[int] = mapped_column(Integer, default=30)
     min_interval_seconds: Mapped[int] = mapped_column(Integer, default=120)
     schedule: Mapped[dict] = mapped_column(JSONB, default=lambda: dict(DEFAULT_SCHEDULE))

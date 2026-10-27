@@ -32,7 +32,7 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.providers import get_provider
-from app.providers.base import InboundRaw, ProviderError
+from app.providers.base import InboundRaw, ProviderAuthError, ProviderError
 from app.services import app_settings
 from app.services import campaigns as campaign_service
 from app.services.contacts import log_activity, set_lead_status
@@ -331,6 +331,8 @@ def sync_mailbox(account_id: uuid.UUID) -> dict:
             items, cursor = get_provider(account).fetch_new(account.sync_cursor)
         except ProviderError as exc:
             account.last_error, account.last_error_at = str(exc)[:2000], utcnow()
+            if isinstance(exc, ProviderAuthError):  # e.g. the mailbox password changed: needs a reconnect
+                account.status = "auth_error"
             db.commit()
             return {"processed": 0, "error": str(exc)}
         processed = 0

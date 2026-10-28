@@ -59,7 +59,6 @@ export const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     items: [
       { href: "/opportunities", label: "Opportunities", icon: KanbanSquare },
       { href: "/prospects", label: "Prospects", icon: Users },
-      { href: "/lists", label: "Imported Lists", icon: FileSpreadsheet },
       { href: "/companies", label: "Companies", icon: Building2 },
     ],
   },
@@ -67,6 +66,7 @@ export const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     label: "Outreach",
     items: [
       { href: "/campaigns", label: "Campaigns", icon: Send },
+      { href: "/lists", label: "Imported Lists", icon: FileSpreadsheet },
       { href: "/sequences", label: "Sequences", icon: ListOrdered },
       { href: "/inbox", label: "Unified Inbox", icon: Inbox },
       { href: "/email-accounts", label: "Email Accounts", icon: Mail },

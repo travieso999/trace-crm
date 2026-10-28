@@ -3,7 +3,7 @@
 import * as React from "react";
 import { cn } from "cn";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowDown, ArrowUp, Download, Plus, Search, Send, Upload, Users, X } from "lucide-react";
@@ -20,7 +20,7 @@ import { EnrollDialog } from "@/components/enroll-dialog";
 import { useCanWrite } from "@/components/app-shell";
 import { api, download, errorMessage } from "@/lib/api";
 import { fullName, humanize, num, relTime } from "@/lib/format";
-import { LEAD_STATUSES, type Contact, type Page, type Tag } from "@/lib/types";
+import { LEAD_STATUSES, type Contact, type Page, type Tag, type ImportList } from "@/lib/types";
 
 const PAGE_SIZE = 50;
 
@@ -33,7 +33,9 @@ function useDebounced<T>(value: T, ms = 300) {
   return v;
 }
 
-type Filters = { lead_status: string; verification_status: string; tag: string };
+type Filters = { lead_status: string; verification_status: string; tag: string; batch_id: string; state: string; city: string; industry: string };
+
+const NO_FILTERS: Filters = { lead_status: "", verification_status: "", tag: "", batch_id: "", state: "", city: "", industry: "" };
 type Sort = { key: string; order: "asc" | "desc" };
 
 function SortHead({ label, k, sort, onSort, className }: { label: string; k: string; sort: Sort; onSort: (s: Sort) => void; className?: string }) {
@@ -155,19 +157,24 @@ function BulkBar({ ids, tags, onDone }: { ids: string[]; tags: Tag[]; onDone: ()
   );
 }
 
-export default function LeadsPage() {
+function ProspectsList() {
   const router = useRouter();
+  const params = useSearchParams();
   const qc = useQueryClient();
   const canWrite = useCanWrite();
   const [search, setSearch] = React.useState("");
   const q = useDebounced(search.trim());
-  const [filters, setFilters] = React.useState<Filters>({ lead_status: "", verification_status: "", tag: "" });
+  // ?batch_id= opens the prospects of one imported list (from Imported Lists)
+  const [filters, setFilters] = React.useState<Filters>({ ...NO_FILTERS, batch_id: params.get("batch_id") ?? "" });
+  const [place, setPlace] = React.useState({ state: "", city: "", industry: "" });
+  const placeQ = useDebounced(JSON.stringify(place));
+  const lists = useQuery({ queryKey: ["import-lists"], queryFn: () => api<ImportList[]>("/api/imports") });
   const [sort, setSort] = React.useState<Sort>({ key: "created_at", order: "desc" });
   const [page, setPage] = React.useState(1);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [creating, setCreating] = React.useState(false);
 
-  const query = { q, ...filters, sort: sort.key, order: sort.order };
+  const query = { q, ...filters, ...(JSON.parse(placeQ) as typeof place), sort: sort.key, order: sort.order };
   const list = useQuery({
     queryKey: ["contacts", query, page],
     queryFn: ({ signal }) => api<Page<Contact>>("/api/contacts", { query: { ...query, page, page_size: PAGE_SIZE }, signal }),
@@ -186,7 +193,8 @@ export default function LeadsPage() {
 
   const items = list.data?.items ?? [];
   const allOnPage = items.length > 0 && items.every((c) => selected.has(c.id));
-  const filtered = !!(q || filters.lead_status || filters.verification_status || filters.tag);
+  const filtered = !!(q || Object.values(filters).some(Boolean) || Object.values(place).some(Boolean));
+  const listName = lists.data?.find((l) => l.id === filters.batch_id)?.name;
 
   function toggle(id: string) {
     setSelected((s) => {
@@ -199,7 +207,7 @@ export default function LeadsPage() {
 
   async function exportCsv() {
     try {
-      await download("/api/contacts/export", { q, ...filters }, "prospects.csv");
+      await download("/api/contacts/export", { q, ...filters, ...place }, "prospects.csv");
     } catch (e) {
       toast.error(errorMessage(e));
     }
@@ -221,14 +229,14 @@ export default function LeadsPage() {
     <>
       <PageHeader
         title="Prospects"
-        description={list.data ? `${num(list.data.total)} ${filtered ? "matching" : "total"}` : undefined}
+        description={list.data ? `${num(list.data.total)} ${filtered ? "matching" : "total"}${listName ? ` in the list “${listName}”` : ""}` : undefined}
         actions={
           <>
-            <Button variant="outline" onClick={exportCsv}>
-              <Download /> Export
-            </Button>
             {canWrite && (
               <>
+                <Button variant="outline" onClick={exportCsv}>
+                  <Download /> Export
+                </Button>
                 <Link href="/prospects/import" className={cn(buttonVariants({ variant: "outline" }))}>
                   <Upload /> Import CSV
                 </Link>
@@ -273,6 +281,19 @@ export default function LeadsPage() {
             </option>
           ))}
         </NativeSelect>
+        {!!lists.data?.length && (
+          <NativeSelect aria-label="Imported list" value={filters.batch_id} onChange={(e) => setFilters({ ...filters, batch_id: e.target.value })}>
+            <option value="">All lists</option>
+            {lists.data.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name} ({num(l.contacts)})
+              </option>
+            ))}
+          </NativeSelect>
+        )}
+        <Input aria-label="State" placeholder="State" className="w-20" value={place.state} onChange={(e) => setPlace({ ...place, state: e.target.value })} />
+        <Input aria-label="City" placeholder="City" className="w-28" value={place.city} onChange={(e) => setPlace({ ...place, city: e.target.value })} />
+        <Input aria-label="Industry" placeholder="Industry" className="w-32" value={place.industry} onChange={(e) => setPlace({ ...place, industry: e.target.value })} />
         {!!tags.data?.length && (
           <NativeSelect aria-label="Tag" value={filters.tag} onChange={(e) => setFilters({ ...filters, tag: e.target.value })}>
             <option value="">Any tag</option>
@@ -289,7 +310,9 @@ export default function LeadsPage() {
             size="sm"
             onClick={() => {
               setSearch("");
-              setFilters({ lead_status: "", verification_status: "", tag: "" });
+              setFilters(NO_FILTERS);
+              setPlace({ state: "", city: "", industry: "" });
+              if (params.get("batch_id")) router.replace("/prospects");
             }}
           >
             Clear filters
@@ -404,5 +427,13 @@ export default function LeadsPage() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+export default function ProspectsPage() {
+  return (
+    <React.Suspense fallback={<Skeleton className="h-64" />}>
+      <ProspectsList />
+    </React.Suspense>
   );
 }

@@ -142,6 +142,7 @@ const STATUS_TONE: Record<string, string> = {
   // enrollment / queue states
   bounced: "bg-red-500/12 text-red-700 dark:text-red-400",
   unsubscribed: "bg-muted text-muted-foreground",
+  suppressed: "bg-red-500/12 text-red-700 dark:text-red-400",
   removed: "bg-muted text-muted-foreground",
   queued: "bg-violet-500/12 text-violet-700 dark:text-violet-400",
   sending: "bg-sky-500/12 text-sky-700 dark:text-sky-400",

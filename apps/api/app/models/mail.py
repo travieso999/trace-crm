@@ -25,7 +25,9 @@ from app.models.crm import Contact
 PROVIDERS = ("gmail", "microsoft", "sandbox", "smtp")
 MAILBOX_STATUSES = ("connected", "paused", "auth_error", "error", "disconnected")
 CAMPAIGN_STATUSES = ("draft", "scheduled", "active", "paused", "completed", "stopped", "error")
-CC_STATUSES = ("active", "replied", "completed", "unsubscribed", "bounced", "stopped", "removed", "error")
+CC_STATUSES = ("active", "paused", "replied", "completed", "unsubscribed", "bounced", "stopped", "removed", "error")
+STEP_STATUSES = ("draft", "active", "paused")
+AUDIENCE_MODES = ("fixed", "dynamic")
 SM_STATUSES = ("queued", "sending", "sent", "failed", "cancelled", "unknown")
 EVENT_TYPES = (
     "attempted",
@@ -78,6 +80,16 @@ class EmailAccount(UUIDPk, Timestamps, Base):
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+# imported lists a campaign drew its audience from ("Associated campaigns" on the list)
+campaign_import_batches = Table(
+    "campaign_import_batches",
+    Base.metadata,
+    Column("campaign_id", UUID(as_uuid=True), ForeignKey("campaigns.id", ondelete="CASCADE"), primary_key=True),
+    Column("batch_id", UUID(as_uuid=True), ForeignKey("import_batches.id", ondelete="CASCADE"), primary_key=True,
+           index=True),
+    Column("added_at", DateTime(timezone=True), nullable=False, default=utcnow),
+)
+
 campaign_mailboxes = Table(
     "campaign_mailboxes",
     Base.metadata,
@@ -88,7 +100,10 @@ campaign_mailboxes = Table(
 
 class Campaign(UUIDPk, Timestamps, SoftDelete, Base):
     __tablename__ = "campaigns"
-    __table_args__ = (CheckConstraint(f"status in {CAMPAIGN_STATUSES}", name="status"),)
+    __table_args__ = (
+        CheckConstraint(f"status in {CAMPAIGN_STATUSES}", name="status"),
+        CheckConstraint(f"audience_mode in {AUDIENCE_MODES}", name="audience_mode"),
+    )
 
     name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
@@ -104,6 +119,14 @@ class Campaign(UUIDPk, Timestamps, SoftDelete, Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # when it was last paused: resuming shifts pending follow-ups by the pause length instead of sending a backlog
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    campaign_type: Mapped[str | None] = mapped_column(String(60))
+    target_location: Mapped[str | None] = mapped_column(String(120))
+    industry: Mapped[str | None] = mapped_column(String(120))
+    # fixed: only prospects added explicitly. dynamic: prospects matching audience_filter are added as they appear
+    audience_mode: Mapped[str] = mapped_column(String(10), default="fixed")
+    audience_filter: Mapped[dict] = mapped_column(JSONB, default=dict)
     last_error: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
 
@@ -115,7 +138,10 @@ class Campaign(UUIDPk, Timestamps, SoftDelete, Base):
 
 class SequenceStep(UUIDPk, Timestamps, Base):
     __tablename__ = "sequence_steps"
-    __table_args__ = (UniqueConstraint("campaign_id", "position", name="uq_sequence_steps_campaign_position"),)
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "position", name="uq_sequence_steps_campaign_position"),
+        CheckConstraint(f"status in {STEP_STATUSES}", name="status"),
+    )
 
     campaign_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("campaigns.id", ondelete="CASCADE"))
     position: Mapped[int] = mapped_column(Integer)  # 1-based
@@ -124,6 +150,10 @@ class SequenceStep(UUIDPk, Timestamps, Base):
     subject: Mapped[str] = mapped_column(String(500), default="")
     body: Mapped[str] = mapped_column(Text, default="")
     reply_in_thread: Mapped[bool] = mapped_column(Boolean, default=True)
+    name: Mapped[str | None] = mapped_column(String(120))  # e.g. "Initial outreach", "Final follow-up"
+    # draft and paused steps hold prospects at this point of the sequence; nothing is skipped
+    status: Mapped[str] = mapped_column(String(10), default="active")
+    send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # not sent before this moment
 
     campaign: Mapped[Campaign] = relationship(back_populates="steps")
 
@@ -157,6 +187,7 @@ class CampaignContact(UUIDPk, Timestamps, Base):
     first_subject: Mapped[str | None] = mapped_column(String(500))
     stop_reason: Mapped[str | None] = mapped_column(String(100))
     replied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # this prospect paused by hand
 
     # lazy="select" (not joined) so SELECT ... FOR UPDATE on campaign_contacts never hits an outer join
     contact: Mapped[Contact] = relationship()

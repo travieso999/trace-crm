@@ -21,6 +21,7 @@ celery.conf.update(
         "sync": {"task": "outreach.sync_due", "schedule": 120.0},
         "reconcile": {"task": "outreach.reconcile", "schedule": 300.0},
         "reminders": {"task": "outreach.reminders", "schedule": 60.0},
+        "audiences": {"task": "outreach.sync_audiences", "schedule": 300.0},
     },
 )
 
@@ -70,3 +71,10 @@ def task_reminders() -> dict:
     from app.services import reminders
 
     return reminders.tick()
+
+
+@celery.task(name="outreach.sync_audiences")
+def sync_audiences() -> int:
+    from app.workers import engine
+
+    return engine.sync_audiences()

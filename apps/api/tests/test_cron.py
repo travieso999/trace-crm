@@ -28,7 +28,7 @@ def test_cron_engine_requires_bearer(monkeypatch, app):
 def test_cron_engine_runs_a_pass(monkeypatch, app):
     r = _client(monkeypatch, app).get("/api/cron/engine", headers={"Authorization": f"Bearer {SECRET}"})
     assert r.status_code == 200, r.text
-    assert set(r.json()) == {"activated", "replies", "sends", "reconciled", "reminders"}
+    assert set(r.json()) == {"activated", "replies", "sends", "reconciled", "reminders", "audience"}
 
 
 def test_cron_engine_skips_while_another_pass_runs(monkeypatch, app):

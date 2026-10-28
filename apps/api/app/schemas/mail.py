@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.common import ORMModel
+from app.services.audience import AudienceFilter
 
 
 class ScheduleIn(BaseModel):
@@ -80,6 +81,9 @@ class StepIn(BaseModel):
     subject: str = Field(default="", max_length=500)
     body: str = Field(default="", max_length=20000)
     reply_in_thread: bool = True
+    name: str | None = Field(default=None, max_length=120)
+    status: str = Field(default="active", pattern="^(draft|active|paused)$")
+    send_at: datetime | None = None  # not sent before this moment (in addition to the delay)
 
 
 class StepOut(ORMModel):
@@ -90,6 +94,9 @@ class StepOut(ORMModel):
     subject: str
     body: str
     reply_in_thread: bool
+    name: str | None = None
+    status: str = "active"
+    send_at: datetime | None = None
 
 
 class CampaignIn(BaseModel):
@@ -103,6 +110,11 @@ class CampaignIn(BaseModel):
     stop_on_auto_reply: bool | None = None
     start_at: datetime | None = None
     mailbox_ids: list[uuid.UUID] | None = None
+    campaign_type: str | None = Field(default=None, max_length=60)
+    target_location: str | None = Field(default=None, max_length=120)
+    industry: str | None = Field(default=None, max_length=120)
+    audience_mode: str | None = Field(default=None, pattern="^(fixed|dynamic)$")
+    audience_filter: AudienceFilter | None = None
 
 
 class CampaignCreate(CampaignIn):
@@ -127,6 +139,13 @@ class CampaignOut(ORMModel):
     last_error: str | None
     created_at: datetime
     updated_at: datetime
+    paused_at: datetime | None = None
+    campaign_type: str | None = None
+    target_location: str | None = None
+    industry: str | None = None
+    audience_mode: str = "fixed"
+    audience_filter: dict = {}
+    import_lists: list[dict] = []  # imported lists this campaign drew prospects from
     steps: list[StepOut] = []
     mailbox_ids: list[uuid.UUID] = []
     stats: dict = {}

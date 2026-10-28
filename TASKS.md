@@ -199,6 +199,40 @@ Legend: [x] done & verified · [~] implemented, awaiting external verification �
 - [ ] Limits on Vercel: request bodies max 4.5 MB (CSV/XLSX imports larger than that fail before the 10 MB app cap);
       rate limiter is per function instance unless REDIS_URL is set; Hobby is for non-commercial use per Vercel terms
 
+## Campaign lists, follow-ups and bulk management (2026-10-28)
+- [x] Imported Lists: every committed import is a named list (`import_batches`, `import_batch_members` incl. prospects
+      that were already in the CRM; prospects are never duplicated). `/lists` page: contacts / valid / duplicates /
+      linked campaigns, view (Prospects `?batch_id=`), add to campaign, rename, export (formula-safe), delete (list only)
+- [x] Shared prospect filter (`services/audience.py`): state, city, industry, list, tag, prospect + email status,
+      previous campaign participation, custom field; `GET /api/contacts/count`. Prospects page gained list/state/city/
+      industry filters
+- [x] New-campaign wizard: details (type, location, industry), then audience: imported list (one click), smart
+      filters with live count and fixed vs dynamic audience, or upload (the import flow, saved as a list and added
+      whole). Dynamic audiences are kept up to date by the engine pass / Celery `outreach.sync_audiences`; prospects
+      removed by hand are never re-added
+- [x] Sequence: named emails, Active / Draft / Paused per email (prospects wait at a draft or paused email; nothing is
+      skipped), optional "not before" date, Recipients view per email (will receive / already received / excluded by
+      reason) with "Send now to everyone waiting". New follow-ups start as drafts
+- [x] Campaign page tabs Overview / Contacts / Email Sequence / Email History / Analytics / Settings; header Send email
+      (confirmation with total, valid, duplicates, unsubscribed, suppressed, replied, missing merge data, final
+      eligible), Add follow-up, Add contacts (list / filters / upload), Pause/Resume, Export
+- [x] Contacts tab: phone, state, email status, last sent, last reply, follow-up status; search/filter; select all
+      matching; remove (prospect kept), pause/resume/stop per prospect, copy/move to another campaign, tag, export.
+      Paused prospects are stopped by replies/unsubscribes/bounces like active ones; resuming a campaign or a prospect
+      shifts pending follow-ups by the pause length instead of releasing a backlog
+- [x] Email History (per email: dates, recipients, sent, failed, bounced, replied, unsubscribed; recipient list) and
+      per-prospect history; Analytics with stated denominators ("delivered" = sent minus bounces; opens not tracked)
+- [x] Exports (prospects, lists, campaign contacts) require the member role; viewers can no longer export
+- [x] Migration 4b9f5ac7be9c (additive; up/down/up + `alembic check` clean)
+- [x] Verified: pytest 136 passed (10 in test_import_lists.py, 12 in test_campaign_workflow.py); ruff, tsc, eslint,
+      `next build` clean
+- [x] Browser check (Edge, production build, throwaway database, sandbox mailbox only): 300-row XLSX → list →
+      Prospects → wizard → campaign with all 300 → sequence with 2 follow-ups → confirmation (300 eligible) → 300 sent →
+      reply + unsubscribe excluded from follow-up #1 (298 waiting) → send-now went out once per prospect up to the
+      mailbox daily limit (200, the rest wait for tomorrow) → remove keeps the prospect → pause/resume; no horizontal
+      overflow at 1366px and 390px in light and dark; no console errors
+- [ ] Past imports can't become lists (the old audit log only kept counts, not which prospects were in each file)
+
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).
 - No Microsoft / OpenAI credentials yet. Google OAuth client is set by the user in apps/api/.env (git-ignored).

@@ -121,6 +121,11 @@ export type Step = {
   subject: string;
   body: string;
   reply_in_thread: boolean;
+  name?: string | null;
+  /** draft and paused emails hold prospects at this point of the sequence; nothing is skipped */
+  status?: "draft" | "active" | "paused";
+  /** not sent before this moment (in addition to the delay) */
+  send_at?: string | null;
 };
 
 export type CampaignStats = {
@@ -157,6 +162,145 @@ export type Campaign = {
   steps: Step[];
   mailbox_ids: string[];
   stats: CampaignStats;
+  paused_at: string | null;
+  campaign_type: string | null;
+  target_location: string | null;
+  industry: string | null;
+  audience_mode: "fixed" | "dynamic";
+  audience_filter: AudienceFilter;
+  import_lists: { id: string; name: string }[];
+};
+
+/** Prospect filters (smart filters / dynamic audiences). Empty values are ignored. */
+export type AudienceFilter = {
+  q?: string;
+  lead_status?: string;
+  verification_status?: string;
+  state?: string;
+  city?: string;
+  industry?: string;
+  tag?: string;
+  batch_id?: string;
+  campaign_id?: string;
+  not_in_campaign_id?: string;
+  participation?: "never" | "previous";
+  custom?: Record<string, string>;
+};
+
+export type ImportList = {
+  id: string;
+  name: string;
+  original_filename: string | null;
+  file_format: string | null;
+  created_at: string;
+  uploaded_by: string | null;
+  total_rows: number;
+  contacts: number;
+  valid_contacts: number;
+  duplicates: number;
+  stats: Record<string, number>;
+  campaigns: { id: string; name: string; status: Campaign["status"] }[];
+};
+
+export type RecipientSummary = {
+  total: number;
+  valid_emails: number;
+  invalid_emails: number;
+  duplicate_addresses: number;
+  unsubscribed: number;
+  suppressed: number;
+  replied: number;
+  paused: number;
+  finished_or_stopped: number;
+  /** blocked by the sender: empty merge fields (e.g. {{first_name}}) and no fallback */
+  missing_data: number;
+  missing_variables: Record<string, number>;
+  eligible: number;
+};
+
+export type StepAudience = {
+  step_id: string;
+  position: number;
+  already_sent: number;
+  waiting: number;
+  excluded: Record<string, number>;
+  sample: { contact_id: string; email: string; first_name: string | null; last_name: string | null; company_name: string | null; next_send_at: string | null }[];
+};
+
+export type StepReport = {
+  step_id: string;
+  position: number;
+  name: string | null;
+  subject: string;
+  body: string;
+  status: "draft" | "active" | "paused";
+  state: "draft" | "paused" | "sent" | "sending" | "scheduled" | "waiting";
+  delay_days: number;
+  business_days: boolean;
+  send_at: string | null;
+  next_send_at: string | null;
+  first_sent_at: string | null;
+  last_sent_at: string | null;
+  recipients: number;
+  waiting: number;
+  queued: number;
+  sent: number;
+  failed: number;
+  bounced: number;
+  delivered: number;
+  replied: number;
+  positive: number;
+  unsubscribed: number;
+};
+
+export type StepMessage = {
+  contact_id: string;
+  email: string;
+  first_name: string | null;
+  last_name: string | null;
+  company_name: string | null;
+  status: string;
+  error: string | null;
+  due_at: string | null;
+  sent_at: string | null;
+  subject: string | null;
+  campaign_status: string;
+  replied_at: string | null;
+};
+
+export type HistoryItem = {
+  direction: "out" | "in" | "pending" | "failed" | "cancelled";
+  kind: string;
+  at: string | null;
+  subject: string | null;
+  body_html?: string;
+  body_text?: string | null;
+  from_email?: string;
+  to_email?: string;
+  intent?: string | null;
+  error?: string | null;
+  step: number | null;
+};
+
+export type CampaignAnalytics = {
+  total_contacts: number;
+  contacts_emailed: number;
+  emails_sent: number;
+  failed: number;
+  queued: number;
+  bounced: number;
+  delivered: number;
+  replies: number;
+  positive_replies: number;
+  unsubscribes: number;
+  followups_sent: number;
+  awaiting_followup: number;
+  not_started: number;
+  paused: number;
+  completed_sequence: number;
+  removed: number;
+  rates: Record<"delivery_rate" | "bounce_rate" | "reply_rate" | "positive_reply_rate" | "unsubscribe_rate", number | null>;
+  definitions: Record<string, string>;
 };
 
 export type Template = { id: string; name: string; subject: string; body: string; created_at: string };
@@ -249,6 +393,13 @@ export type CampaignLead = {
   mailbox: string | null;
   replied_at: string | null;
   enrolled_at: string;
+  phone: string | null;
+  state: string | null;
+  city: string | null;
+  verification_status: string;
+  suppressed: boolean;
+  last_sent_at: string | null;
+  paused_at: string | null;
 };
 
 export type CampaignMessage = {

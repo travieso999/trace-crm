@@ -25,6 +25,14 @@ def activate_scheduled() -> int:
         return n
 
 
+def sync_audiences() -> int:
+    """Running campaigns with a dynamic audience pick up newly matching prospects."""
+    with SessionLocal() as db:
+        n = campaign_service.sync_dynamic_audiences(db)
+        db.commit()
+        return n
+
+
 def sync_due(force: bool = False) -> int:
     cutoff = utcnow() - SYNC_EVERY
     with SessionLocal() as db:
@@ -42,7 +50,8 @@ def tick(force_sync: bool = False) -> dict:
         "sends": sending.send_due(),
         "reconciled": sending.reconcile_unknown(),
         "reminders": reminders.tick(),
+        "audience": sync_audiences(),
     }
-    if result["activated"] or result["replies"] or result["sends"] or result["reminders"]:
+    if result["activated"] or result["replies"] or result["sends"] or result["reminders"] or result["audience"]:
         log(logger, logging.INFO, "engine_tick", **{k: v for k, v in result.items() if v})
     return result

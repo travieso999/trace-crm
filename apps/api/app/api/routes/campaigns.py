@@ -1,12 +1,13 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import audit, reader, writer
-from app.api.routes.contacts import _filtered
+from app.api.routes.imports import _get as get_import_list
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import (
@@ -15,10 +16,12 @@ from app.models import (
     Contact,
     EmailAccount,
     EmailTemplate,
+    ImportBatch,
     ScheduledMessage,
     SentMessage,
     SequenceStep,
     User,
+    campaign_import_batches,
 )
 from app.models.base import utcnow
 from app.providers import get_provider
@@ -36,8 +39,11 @@ from app.schemas.mail import (
     TemplateOut,
     TestSendIn,
 )
-from app.services import app_settings, enrollment, sending
+from app.services import app_settings, campaign_reports, enrollment, import_lists, sending
 from app.services import campaigns as svc
+from app.services.audience import AudienceFilter, contacts_query
+from app.services.contacts import get_or_create_tags, suppressed_set
+from app.services.csv_import import export_contacts_csv
 from app.services.normalize import InvalidEmail, normalize_email
 from app.services.rendering import STANDARD_VARIABLES, MissingVariables, render_email, variables_in
 
@@ -59,6 +65,8 @@ class EnrollIn(BaseModel):
     verification_status: str | None = None
     state: str | None = None
     tag: str | None = None
+    batch_id: uuid.UUID | None = None  # add a whole imported list
+    filter: AudienceFilter | None = None  # smart filters (state, city, industry, list, tags, custom fields...)
     # dry_run: report per lead (ready / skipped / missing merge fields) without enrolling anyone.
     # only_ready: enroll just the leads the report marks "ready" (skip leads missing merge fields).
     dry_run: bool = False
@@ -78,9 +86,18 @@ def _get(db: Session, campaign_id: uuid.UUID) -> Campaign:
 
 def _out(db: Session, campaigns: list[Campaign]) -> list[CampaignOut]:
     stats = svc.stats(db, [c.id for c in campaigns])
+    lists: dict[uuid.UUID, list[dict]] = {}
+    if campaigns:
+        for cid, bid, name in db.execute(
+            select(campaign_import_batches.c.campaign_id, ImportBatch.id, ImportBatch.name)
+            .join(ImportBatch, ImportBatch.id == campaign_import_batches.c.batch_id)
+            .where(campaign_import_batches.c.campaign_id.in_([c.id for c in campaigns]),
+                   ImportBatch.deleted_at.is_(None))):
+            lists.setdefault(cid, []).append({"id": str(bid), "name": name})
     out = []
     for c in campaigns:
         o = CampaignOut.model_validate(c)
+        o.import_lists = lists.get(c.id, [])
         o.steps = [StepOut.model_validate(s) for s in c.steps]
         o.mailbox_ids = [m.id for m in c.mailboxes]
         o.stats = stats.get(c.id, {})
@@ -94,9 +111,16 @@ def _campaign_error(exc: svc.CampaignError) -> HTTPException:
 
 def _apply(db: Session, c: Campaign, data: dict) -> None:
     for f in ("name", "description", "daily_limit", "missing_variable_policy", "variable_fallbacks",
-              "require_approved_personalization", "stop_on_auto_reply", "start_at"):
+              "require_approved_personalization", "stop_on_auto_reply", "start_at", "campaign_type",
+              "target_location", "industry"):
         if f in data:
-            setattr(c, f, data[f])
+            setattr(c, f, data[f].strip() or None if isinstance(data[f], str) and f != "name" else data[f])
+    if "audience_filter" in data and data["audience_filter"] is not None:
+        c.audience_filter = AudienceFilter.model_validate(data["audience_filter"]).to_json()
+    if data.get("audience_mode"):
+        if data["audience_mode"] == "dynamic" and AudienceFilter.model_validate(c.audience_filter or {}).is_empty():
+            raise HTTPException(422, "A dynamic audience needs at least one filter")
+        c.audience_mode = data["audience_mode"]
     if data.get("schedule"):
         sched = dict(data["schedule"])
         if sched.get("use_recipient_timezone") is None:
@@ -246,36 +270,48 @@ def campaign_contacts(
     campaign_id: uuid.UUID,
     status: str | None = None,
     q: str | None = None,
+    state: str | None = None,
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     _: User = Depends(reader),
     db: Session = Depends(get_db),
 ):
     c = _get(db, campaign_id)
-    stmt = (select(CampaignContact, Contact, EmailAccount.email)
+    last_sent = (select(SentMessage.contact_id, func.max(SentMessage.sent_at).label("at"))
+                 .where(SentMessage.campaign_id == c.id).group_by(SentMessage.contact_id).subquery())
+    stmt = (select(CampaignContact, Contact, EmailAccount.email, last_sent.c.at)
             .join(Contact, Contact.id == CampaignContact.contact_id)
             .outerjoin(EmailAccount, EmailAccount.id == CampaignContact.email_account_id)
+            .outerjoin(last_sent, last_sent.c.contact_id == Contact.id)
             .where(CampaignContact.campaign_id == c.id))
-    if status:
-        stmt = stmt.where(CampaignContact.status.in_(status.split(",")))
+    # removed prospects are hidden unless asked for (they stay in Prospects with their history)
+    stmt = stmt.where(CampaignContact.status.in_(status.split(","))) if status else \
+        stmt.where(CampaignContact.status != "removed")
     if q:
         like = f"%{q.strip().lower()}%"
         stmt = stmt.where(or_(func.lower(Contact.email).like(like), func.lower(Contact.first_name).like(like),
                               func.lower(Contact.last_name).like(like), func.lower(Contact.company_name).like(like)))
+    if state:
+        stmt = stmt.where(func.upper(Contact.state).in_([x.strip().upper() for x in state.split(",") if x.strip()]))
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     rows = db.execute(stmt.order_by(CampaignContact.created_at.desc(), CampaignContact.id)
                       .offset((page - 1) * page_size).limit(page_size)).all()
+    suppressed = suppressed_set(db, [ct.email for _, ct, _, _ in rows])
     n_steps = len(c.steps)
     return {
         "items": [{
             "contact_id": str(ct.id), "email": ct.email, "first_name": ct.first_name, "last_name": ct.last_name,
-            "company_name": ct.company_name, "lead_status": ct.lead_status, "status": cc.status,
+            "company_name": ct.company_name, "phone": ct.phone, "state": ct.state, "city": ct.city,
+            "lead_status": ct.lead_status, "verification_status": ct.verification_status,
+            "suppressed": ct.email in suppressed, "status": cc.status,
             "current_step": cc.current_step, "total_steps": n_steps,
             "next_send_at": cc.next_send_at.isoformat() if cc.next_send_at else None,
             "stop_reason": cc.stop_reason, "mailbox": mbox,
             "replied_at": cc.replied_at.isoformat() if cc.replied_at else None,
+            "last_sent_at": sent_at.isoformat() if sent_at else None,
+            "paused_at": cc.paused_at.isoformat() if cc.paused_at else None,
             "enrolled_at": cc.created_at.isoformat(),
-        } for cc, ct, mbox in rows],
+        } for cc, ct, mbox, sent_at in rows],
         "total": total, "page": page, "page_size": page_size,
     }
 
@@ -287,10 +323,14 @@ def enroll(campaign_id: uuid.UUID, body: EnrollIn, request: Request, user: User 
     if body.contact_ids is not None:
         ids = body.contact_ids
     else:
-        if not any((body.q, body.lead_status, body.verification_status, body.state, body.tag)):
-            raise HTTPException(422, "Pass contact_ids or at least one filter")
-        stmt = _filtered(body.q, body.lead_status, body.verification_status, body.state, body.tag, None, None)
-        ids = list(db.scalars(stmt.with_only_columns(Contact.id).limit(10000)))
+        f = body.filter or AudienceFilter(q=body.q, lead_status=body.lead_status,
+                                          verification_status=body.verification_status, state=body.state, tag=body.tag)
+        if body.batch_id:
+            get_import_list(db, body.batch_id)  # 404 for a deleted or unknown list
+            f = f.model_copy(update={"batch_id": body.batch_id})
+        if f.is_empty():
+            raise HTTPException(422, "Pass contact_ids, an imported list or at least one filter")
+        ids = list(db.scalars(contacts_query(f).with_only_columns(Contact.id).order_by(Contact.created_at).limit(10000)))
     if c.status in ("completed", "stopped") or c.archived_at:
         raise _campaign_error(svc.CampaignError("Cannot add prospects to a finished or archived campaign"))
     rows = enrollment.report(db, c, ids)
@@ -305,9 +345,151 @@ def enroll(campaign_id: uuid.UUID, body: EnrollIn, request: Request, user: User 
         raise _campaign_error(exc) from exc
     if body.only_ready:
         result["skipped_missing_fields"] = summary["missing_fields"]
+    if body.batch_id:
+        import_lists.link_campaign(db, c.id, body.batch_id)
     audit(db, user, "campaign.enrolled", "campaign", c.id, request, **result)
     db.commit()
     return {**result, "summary": summary, "campaign_status": c.status}
+
+
+@router.get("/{campaign_id}/recipients-summary")
+def recipients_summary(campaign_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
+    """Who is in the campaign and who will actually be emailed (shown before sending)."""
+    return svc.recipient_summary(db, _get(db, campaign_id))
+
+
+def _step(c: Campaign, step_id: uuid.UUID) -> SequenceStep:
+    step = next((s for s in c.steps if s.id == step_id), None)
+    if step is None:
+        raise HTTPException(404, "Email not found in this campaign")
+    return step
+
+
+@router.get("/{campaign_id}/steps/{step_id}/audience")
+def step_audience(campaign_id: uuid.UUID, step_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
+    c = _get(db, campaign_id)
+    return svc.step_audience(db, c, _step(c, step_id))
+
+
+@router.post("/{campaign_id}/steps/{step_id}/send-now")
+def send_step_now(campaign_id: uuid.UUID, step_id: uuid.UUID, request: Request, user: User = Depends(writer),
+                  db: Session = Depends(get_db)):
+    """Send this email now to every prospect waiting for it (eligible non-responders)."""
+    c = _get(db, campaign_id)
+    step = _step(c, step_id)
+    try:
+        n = svc.send_step_now(db, c, step)
+    except svc.CampaignError as exc:
+        raise _campaign_error(exc) from exc
+    audit(db, user, "campaign.step_sent_now", "campaign", c.id, request, step=step.position, prospects=n)
+    db.commit()
+    return {"queued": n, "message": f"{n} prospect(s) queued. Emails go out within the sending window and daily limits."}
+
+
+@router.get("/{campaign_id}/steps-report")
+def steps_report(campaign_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
+    return campaign_reports.steps_report(db, _get(db, campaign_id))
+
+
+@router.get("/{campaign_id}/steps/{step_id}/messages")
+def step_messages(campaign_id: uuid.UUID, step_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
+    c = _get(db, campaign_id)
+    return campaign_reports.step_messages(db, c, _step(c, step_id).id)
+
+
+@router.get("/{campaign_id}/contacts/{contact_id}/history")
+def contact_history(campaign_id: uuid.UUID, contact_id: uuid.UUID, _: User = Depends(reader),
+                    db: Session = Depends(get_db)):
+    return campaign_reports.contact_history(db, _get(db, campaign_id), contact_id)
+
+
+@router.get("/{campaign_id}/analytics")
+def campaign_analytics(campaign_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
+    return campaign_reports.analytics(db, _get(db, campaign_id))
+
+
+class CampaignBulkIn(BaseModel):
+    action: str = Field(pattern="^(remove|pause|resume|stop|copy|move|add_tag)$")
+    contact_ids: list[uuid.UUID] | None = Field(default=None, max_length=10000)
+    # "select all": every prospect in the campaign matching these (instead of contact_ids)
+    all_matching: bool = False
+    status: str | None = None
+    q: str | None = None
+    target_campaign_id: uuid.UUID | None = None  # copy / move
+    tag: str | None = Field(default=None, max_length=80)  # add_tag
+
+
+def _campaign_contact_ids(db: Session, c: Campaign, status: str | None, q: str | None) -> list[uuid.UUID]:
+    stmt = (select(CampaignContact.contact_id).join(Contact, Contact.id == CampaignContact.contact_id)
+            .where(CampaignContact.campaign_id == c.id))
+    stmt = stmt.where(CampaignContact.status.in_(status.split(","))) if status else \
+        stmt.where(CampaignContact.status != "removed")
+    if q:
+        like = f"%{q.strip().lower()}%"
+        stmt = stmt.where(or_(func.lower(Contact.email).like(like), func.lower(Contact.first_name).like(like),
+                              func.lower(Contact.last_name).like(like), func.lower(Contact.company_name).like(like)))
+    return list(db.scalars(stmt.limit(10000)))
+
+
+@router.post("/{campaign_id}/contacts/bulk")
+def campaign_contacts_bulk(campaign_id: uuid.UUID, body: CampaignBulkIn, request: Request,
+                           user: User = Depends(writer), db: Session = Depends(get_db)):
+    """Bulk actions on prospects in this campaign. Nothing here deletes a prospect from Prospects."""
+    c = _get(db, campaign_id)
+    if body.all_matching:
+        ids = _campaign_contact_ids(db, c, body.status, body.q)
+    elif body.contact_ids:
+        ids = list(dict.fromkeys(body.contact_ids))
+    else:
+        raise HTTPException(422, "Select at least one prospect")
+    try:
+        if body.action == "remove":
+            n = sum(1 for cid in ids if svc.remove_contact(db, c, cid))
+            result = {"affected": n, "message": f"{n} prospect(s) removed from this campaign (still in Prospects)"}
+        elif body.action in ("pause", "resume", "stop"):
+            fn = {"pause": svc.pause_contacts, "resume": svc.resume_contacts, "stop": svc.stop_contacts}[body.action]
+            n = fn(db, c, ids)
+            verb = {"pause": "paused", "resume": "resumed", "stop": "will get no more emails from this campaign"}
+            result = {"affected": n, "message": f"{n} prospect(s) {verb[body.action]}"}
+        elif body.action in ("copy", "move"):
+            if not body.target_campaign_id:
+                raise HTTPException(422, "Pick the campaign to copy or move to")
+            target = _get(db, body.target_campaign_id)
+            r = svc.copy_contacts(db, c, target, ids, user, move=body.action == "move")
+            result = {**r, "affected": r["enrolled"],
+                      "message": f"{r['enrolled']} prospect(s) added to “{target.name}”"
+                                 + (" and removed from this campaign" if body.action == "move" else "")}
+        else:  # add_tag
+            if not (body.tag or "").strip():
+                raise HTTPException(422, "Tag name required")
+            tag = get_or_create_tags(db, [body.tag.strip()])[0]
+            in_campaign = set(db.scalars(select(CampaignContact.contact_id).where(
+                CampaignContact.campaign_id == c.id, CampaignContact.contact_id.in_(ids))))
+            n = 0
+            for contact in db.scalars(select(Contact).where(Contact.id.in_(in_campaign))):
+                if tag not in contact.tags:
+                    contact.tags = [*contact.tags, tag]
+                    n += 1
+            result = {"affected": n, "message": f"Tag “{tag.name}” added to {n} prospect(s)"}
+    except svc.CampaignError as exc:
+        raise _campaign_error(exc) from exc
+    audit(db, user, f"campaign.contacts_{body.action}", "campaign", c.id, request, count=result["affected"],
+          target=str(body.target_campaign_id) if body.target_campaign_id else None)
+    db.commit()
+    return result
+
+
+@router.get("/{campaign_id}/contacts/export")
+def export_campaign_contacts(campaign_id: uuid.UUID, request: Request, status: str | None = None, q: str | None = None,
+                             user: User = Depends(writer), db: Session = Depends(get_db)):
+    c = _get(db, campaign_id)
+    ids = _campaign_contact_ids(db, c, status, q)
+    contacts = list(db.scalars(select(Contact).where(Contact.id.in_(ids)).order_by(Contact.email)))
+    audit(db, user, "campaign.contacts_exported", "campaign", c.id, request, count=len(contacts))
+    db.commit()
+    safe = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in c.name.lower()).strip("-")[:60] or "campaign"
+    return Response(export_contacts_csv(contacts), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{safe}-{utcnow():%Y%m%d}.csv"'})
 
 
 @router.get("/{campaign_id}/preview/{contact_id}")

@@ -3,19 +3,124 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowDown, ArrowUp, Eye, Plus, Send, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Eye, Plus, Send, Trash2, Users, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Field, NativeSelect, Spinner } from "@/components/common";
+import { ConfirmDialog, ErrorState, Field, NativeSelect, Spinner } from "@/components/common";
+import { stepLabel } from "@/components/campaign/labels";
 import { useMe } from "@/components/app-shell";
 import { EmailFrame } from "@/components/email-frame";
 import { api, errorMessage } from "@/lib/api";
-import type { Campaign, EmailAccount, PreviewResult, Step, Template } from "@/lib/types";
+import { dateTime, fullName, humanize, num, relTime } from "@/lib/format";
+import type { Campaign, EmailAccount, PreviewResult, Step, StepAudience, Template } from "@/lib/types";
 
-const blankFollowUp = (): Step => ({ delay_days: 2, business_days: true, subject: "", body: "", reply_in_thread: true });
+const blankFollowUp = (): Step => ({ delay_days: 3, business_days: true, subject: "", body: "", reply_in_thread: true, name: null, status: "draft", send_at: null });
+
+/** ISO ⇄ the value a datetime-local input wants (local time, no zone). */
+const toLocalInput = (iso: string | null | undefined) =>
+  iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "";
+const fromLocalInput = (v: string) => (v ? new Date(v).toISOString() : null);
+
+/** Who a saved email goes to next, who already got it, who won't and why; plus "send now" to everyone waiting. */
+function StepAudienceDialog({ campaign, step, position, canWrite, onOpenChange }: {
+  campaign: Campaign; step: Step | null; position: number; canWrite: boolean; onOpenChange: (o: boolean) => void;
+}) {
+  const qc = useQueryClient();
+  const [confirm, setConfirm] = React.useState(false);
+  const q = useQuery({
+    queryKey: ["step-audience", campaign.id, step?.id],
+    queryFn: () => api<StepAudience>(`/api/campaigns/${campaign.id}/steps/${step!.id}/audience`),
+    enabled: !!step?.id,
+  });
+  const now = useMutation({
+    mutationFn: () => api<{ queued: number; message: string }>(`/api/campaigns/${campaign.id}/steps/${step!.id}/send-now`, { method: "POST" }),
+    onSuccess: (r) => {
+      toast.success(r.message);
+      for (const k of ["step-audience", "campaign", "campaign-leads", "steps-report"]) qc.invalidateQueries({ queryKey: [k] });
+      setConfirm(false);
+      onOpenChange(false);
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const label = step ? stepLabel(position, step.name) : "";
+  const excluded = Object.entries(q.data?.excluded ?? {}).filter(([, n]) => n > 0);
+  const canSendNow = canWrite && campaign.status === "active" && step?.status !== "draft" && step?.status !== "paused" && (q.data?.waiting ?? 0) > 0;
+  return (
+    <Dialog open={!!step} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Recipients · {label}</DialogTitle>
+          <DialogDescription>
+            {position === 1
+              ? "Everyone in the campaign who hasn’t been emailed yet."
+              : "Everyone who got the previous email and hasn’t replied, unsubscribed, bounced or been stopped."}
+          </DialogDescription>
+        </DialogHeader>
+        {q.isPending ? (
+          <Spinner />
+        ) : q.isError ? (
+          <ErrorState error={q.error} />
+        ) : (
+          <div className="grid gap-3 text-sm">
+            <dl className="grid grid-cols-2 gap-2">
+              <div className="rounded-lg border p-2">
+                <dt className="text-xs text-muted-foreground">Will receive it</dt>
+                <dd className="text-lg font-semibold tabular-nums">{num(q.data.waiting)}</dd>
+              </div>
+              <div className="rounded-lg border p-2">
+                <dt className="text-xs text-muted-foreground">Already received it</dt>
+                <dd className="text-lg font-semibold tabular-nums">{num(q.data.already_sent)}</dd>
+              </div>
+            </dl>
+            {excluded.length > 0 && (
+              <p className="text-muted-foreground">
+                Not sent to: {excluded.map(([k, n]) => `${num(n)} ${humanize(k).toLowerCase()}`).join(" · ")}
+              </p>
+            )}
+            {q.data.sample.length > 0 && (
+              <ul className="max-h-56 divide-y overflow-auto rounded-lg border">
+                {q.data.sample.map((r) => (
+                  <li key={r.contact_id} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                    <span className="min-w-0 truncate">
+                      {fullName(r)} <span className="text-muted-foreground">· {r.email}</span>
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground" title={dateTime(r.next_send_at)}>
+                      {r.next_send_at ? relTime(r.next_send_at) : "when started"}
+                    </span>
+                  </li>
+                ))}
+                {q.data.waiting > q.data.sample.length && (
+                  <li className="px-3 py-1.5 text-xs text-muted-foreground">and {num(q.data.waiting - q.data.sample.length)} more</li>
+                )}
+              </ul>
+            )}
+            {canWrite && step?.status !== "active" && <p className="text-muted-foreground">This email is a {step?.status}: activate it to send.</p>}
+            {canWrite && campaign.status !== "active" && <p className="text-muted-foreground">Start or resume the campaign to send.</p>}
+            {canSendNow && (
+              <div className="flex justify-end">
+                <Button onClick={() => setConfirm(true)}>
+                  <Zap /> Send now to {num(q.data.waiting)} waiting
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+        <ConfirmDialog
+          open={confirm}
+          onOpenChange={setConfirm}
+          title={`Send “${label}” now?`}
+          description={`It goes to the ${num(q.data?.waiting)} prospect(s) waiting for it, without waiting for its delay or date. Replies, unsubscribes, suppression, the sending window and daily limits still apply, and nobody gets it twice.`}
+          confirmLabel="Send now"
+          pending={now.isPending}
+          onConfirm={() => now.mutate()}
+        />
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function VariableButtons({ names, onInsert, disabled }: { names: string[]; onInsert: (v: string) => void; disabled?: boolean }) {
   return (
@@ -46,6 +151,7 @@ function StepCard({
   onMove,
   onRemove,
   onPreview,
+  onRecipients,
 }: {
   step: Step;
   index: number;
@@ -57,6 +163,7 @@ function StepCard({
   onMove: (dir: -1 | 1) => void;
   onRemove: () => void;
   onPreview: () => void;
+  onRecipients?: () => void;
 }) {
   const bodyRef = React.useRef<HTMLTextAreaElement>(null);
   const first = index === 0;
@@ -77,12 +184,22 @@ function StepCard({
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
         <CardTitle className="text-sm">
-          Step {index + 1}
+          {stepLabel(index + 1, step.name)}
+          {step.status && step.status !== "active" && (
+            <span className="ml-2 rounded-md bg-muted px-1.5 py-0.5 text-xs font-normal capitalize text-muted-foreground">{step.status}</span>
+          )}
           <span className="ml-2 font-normal text-muted-foreground">
-            {first ? "Sent when the prospect is enrolled" : `${step.delay_days} ${step.business_days ? "business " : ""}day${step.delay_days === 1 ? "" : "s"} after step ${index}`}
+            {first
+              ? "Sent when the campaign starts (or when a prospect is added later)"
+              : `${step.delay_days} ${step.business_days ? "business " : ""}day${step.delay_days === 1 ? "" : "s"} after the previous email${step.send_at ? `, not before ${dateTime(step.send_at)}` : ""}`}
           </span>
         </CardTitle>
         <div className="flex items-center gap-1">
+          {onRecipients && (
+            <Button type="button" variant="ghost" size="sm" onClick={onRecipients}>
+              <Users /> Recipients
+            </Button>
+          )}
           <Button type="button" variant="ghost" size="icon-sm" onClick={onPreview} aria-label={`Preview step ${index + 1}`}>
             <Eye />
           </Button>
@@ -102,6 +219,25 @@ function StepCard({
         </div>
       </CardHeader>
       <CardContent className="grid gap-3">
+        <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
+          <Field label="Name (only your team sees it)" htmlFor={`name-${index}`}>
+            <Input id={`name-${index}`} maxLength={120} disabled={readOnly} value={step.name ?? ""} placeholder={stepLabel(index + 1)}
+              onChange={(e) => onChange({ ...step, name: e.target.value })} />
+          </Field>
+          <Field label="Status" htmlFor={`status-${index}`}>
+            <NativeSelect id={`status-${index}`} className="w-full" disabled={readOnly} value={step.status ?? "active"}
+              onChange={(e) => onChange({ ...step, status: e.target.value as Step["status"] })}>
+              <option value="active">Active</option>
+              <option value="draft">Draft (not sent yet)</option>
+              <option value="paused">Paused</option>
+            </NativeSelect>
+          </Field>
+        </div>
+        {step.status && step.status !== "active" && (
+          <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">
+            Prospects who reach this email wait here until you set it to Active. {first ? "" : "Nobody skips it."}
+          </p>
+        )}
         {!first && (
           <div className="flex flex-wrap items-end gap-3">
             <Field label="Wait (days)" htmlFor={`delay-${index}`} className="w-28">
@@ -118,6 +254,10 @@ function StepCard({
                 onChange={(e) => onChange({ ...step, reply_in_thread: e.target.checked })} />
               Reply in the same thread
             </label>
+            <Field label="Not before (optional)" htmlFor={`sendat-${index}`} className="w-56">
+              <Input id={`sendat-${index}`} type="datetime-local" disabled={readOnly} value={toLocalInput(step.send_at)}
+                onChange={(e) => onChange({ ...step, send_at: fromLocalInput(e.target.value) })} />
+            </Field>
           </div>
         )}
         {showSubject ? (
@@ -218,7 +358,7 @@ function TestSendDialog({ step, campaignId, onOpenChange }: { step: Step | null;
   );
 }
 
-export function SequenceEditor({ campaign, canWrite }: { campaign: Campaign; canWrite: boolean }) {
+export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign: Campaign; canWrite: boolean; addSignal?: number }) {
   const qc = useQueryClient();
   const readOnly = !canWrite || campaign.status === "completed" || campaign.status === "stopped";
   const [steps, setSteps] = React.useState<Step[]>(campaign.steps);
@@ -229,6 +369,13 @@ export function SequenceEditor({ campaign, canWrite }: { campaign: Campaign; can
     setSteps(campaign.steps);
   }
   const dirty = JSON.stringify(steps) !== JSON.stringify(campaign.steps);
+  // the page header's "Add Follow-Up" button bumps addSignal
+  const [seenSignal, setSeenSignal] = React.useState(addSignal);
+  if (addSignal !== seenSignal) {
+    setSeenSignal(addSignal);
+    if (!readOnly && steps.length < 20) setSteps((all) => [...all, blankFollowUp()]);
+  }
+  const [recipientsFor, setRecipientsFor] = React.useState<{ step: Step; position: number } | null>(null);
   const vars = useQuery({ queryKey: ["template-variables"], queryFn: () => api<{ standard: string[]; custom: string[] }>("/api/campaigns/variables") });
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => api<Template[]>("/api/templates") });
   const [previewIdx, setPreviewIdx] = React.useState(0);
@@ -248,7 +395,11 @@ export function SequenceEditor({ campaign, canWrite }: { campaign: Campaign; can
     mutationFn: () =>
       api<Campaign>(`/api/campaigns/${campaign.id}/steps`, {
         method: "PUT",
-        body: { steps: steps.map(({ id, delay_days, business_days, subject, body, reply_in_thread }) => ({ id, delay_days, business_days, subject, body, reply_in_thread })) },
+        body: {
+          steps: steps.map(({ id, delay_days, business_days, subject, body, reply_in_thread, name, status, send_at }) => ({
+            id, delay_days, business_days, subject, body, reply_in_thread, name: name?.trim() || null, status: status ?? "active", send_at: send_at ?? null,
+          })),
+        },
       }),
     onSuccess: (c) => {
       qc.setQueryData(["campaign", campaign.id], c);
@@ -286,6 +437,7 @@ export function SequenceEditor({ campaign, canWrite }: { campaign: Campaign; can
             onMove={(d) => move(i, d)}
             onRemove={() => setSteps((all) => all.filter((_, j) => j !== i))}
             onPreview={() => setPreviewIdx(i)}
+            onRecipients={s.id && !dirty ? () => setRecipientsFor({ step: s, position: i + 1 }) : undefined}
           />
         ))}
         {!readOnly && (
@@ -307,7 +459,7 @@ export function SequenceEditor({ campaign, canWrite }: { campaign: Campaign; can
       </div>
       <Card className="h-fit lg:sticky lg:top-20">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-sm">Preview · step {Math.min(previewIdx, steps.length - 1) + 1}</CardTitle>
+          <CardTitle className="text-sm">Preview · {stepLabel(Math.min(previewIdx, steps.length - 1) + 1, previewStep?.name)}</CardTitle>
           {canWrite && previewStep && (
             <Button size="sm" variant="outline" disabled={!previewStep.body.trim()} onClick={() => setTestStep(previewStep)}>
               <Send /> Test
@@ -335,6 +487,8 @@ export function SequenceEditor({ campaign, canWrite }: { campaign: Campaign; can
         </CardContent>
       </Card>
       <TestSendDialog step={testStep} campaignId={campaign.id} onOpenChange={(o) => !o && setTestStep(null)} />
+      <StepAudienceDialog campaign={campaign} step={recipientsFor?.step ?? null} position={recipientsFor?.position ?? 1} canWrite={canWrite}
+        onOpenChange={(o) => !o && setRecipientsFor(null)} />
     </div>
   );
 }

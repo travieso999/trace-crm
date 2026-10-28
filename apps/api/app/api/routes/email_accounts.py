@@ -371,7 +371,8 @@ def send_test_email(account_id: uuid.UUID, body: TestEmailIn, request: Request, 
         raise HTTPException(422, str(exc)) from exc
     if to not in sending.test_recipients(db, a):
         raise HTTPException(403, sending.TEST_RECIPIENT_ERROR)
-    text = (f"This is a test email from Trace CRM, sent from {a.email} by {user.email}.\n\n"
+    # the recipient sees only the mailbox; the signed-in user is recorded in the audit log, not in the message
+    text = (f"This is a test email from Trace CRM, sent from {a.email}.\n\n"
             "It only checks that this mailbox can send. No campaign or prospect was involved.")
     rfc_id = new_message_id(a.email)
     out = OutgoingMessage(from_email=a.email, from_name=a.display_name, to_email=to,

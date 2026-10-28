@@ -230,6 +230,7 @@ def test_test_email_respects_real_sending(client, server, db, monkeypatch):
     r = client.post(f"/api/email-accounts/{mid}/test-email", json={"to_email": "qa@tracestudio.dev"})
     assert r.status_code == 200, r.text
     assert server.sent[0]["to"] == "qa@tracestudio.dev"
+    assert b"admin@trace.studio" not in server.sent[0]["raw"]  # the signed-in user's login never appears in mail
 
 
 @pytest.mark.parametrize("setup,error", [

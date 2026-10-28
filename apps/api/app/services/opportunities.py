@@ -16,7 +16,7 @@ from app.models import Company, Contact, CrmNote, CrmOpportunity, CrmTask, Pipel
 from app.models.base import utcnow
 from app.models.crm import LEAD_STATUSES
 from app.services import campaigns as campaign_service
-from app.services.contacts import apply_fields, find_active_contact, log_activity
+from app.services.contacts import apply_fields, find_active_contact, log_activity, make_client
 from app.services.normalize import InvalidEmail, normalize_email
 
 PER_STAGE = 50
@@ -241,6 +241,8 @@ def move(db: Session, contact: Contact, stage: PipelineStage, user: User | None)
         contact.lead_status = stage.lead_status
         if stage.lead_status == "not_interested":
             campaign_service.stop_contact_everywhere(db, contact.id, "not_interested")
+    if contact.lead_status == "won" or opp.status == "won":
+        make_client(db, contact)
     if old.id != stage.id:
         log_activity(db, contact.id, "stage_change", f"Stage: {old.name} → {stage.name}", user, from_stage=old.name,
                      to_stage=stage.name, old=old_status, new=contact.lead_status, reason="opportunity_board")
@@ -313,6 +315,8 @@ def set_status(db: Session, contact: Contact, status: str, user: User | None) ->
         log_activity(db, contact.id, "opportunity_status", f"Opportunity marked {status}", user, old=opp.status, new=status)
         opp.status = status
         opp.closed_at = None if status == "open" else (opp.closed_at or utcnow())
+        if status == "won":
+            make_client(db, contact)
     db.flush()
     return opp
 

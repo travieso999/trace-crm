@@ -80,6 +80,7 @@ def test_move_sets_linked_lead_status_and_automation_respects_custom_stages(clie
     assert client.post(f"/api/opportunities/{cid}/move", json={"stage_id": won["id"]}).json()["status"] == "won"
     db.expire_all()
     assert db.get(Contact, cid).lead_status == "won"
+    assert db.get(Contact, cid).company_id is not None  # a won deal makes the business a client company
 
     custom = next(s for s in client.post("/api/opportunities/stages", json={"name": "Negotiation"}).json()
                   if s["name"] == "Negotiation")

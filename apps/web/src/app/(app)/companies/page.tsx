@@ -65,7 +65,7 @@ export default function CompaniesPage() {
     <>
       <PageHeader
         title="Companies"
-        description={list.data ? `${num(list.data.total)} ${filtered ? "matching" : "total"}` : undefined}
+        description={list.data ? `Your clients · ${num(list.data.total)} ${filtered ? "matching" : "total"}. A prospect’s business is added here when they’re marked Won.` : undefined}
         actions={
           canWrite && (
             <Button onClick={() => setCreating(true)}>
@@ -108,7 +108,7 @@ export default function CompaniesPage() {
         <EmptyState
           icon={Building2}
           title={filtered ? "No companies match" : "No companies yet"}
-          description={filtered ? "Try a different search." : "Companies are created automatically when you import prospects."}
+          description={filtered ? "Try a different search." : "No clients yet. When a prospect is marked Won (or their deal is won on the board), their business appears here. You can also add one by hand."}
         />
       ) : (
         <>

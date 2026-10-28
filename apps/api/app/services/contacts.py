@@ -42,7 +42,8 @@ def find_active_contact(db: Session, email: str) -> Contact | None:
 
 
 def get_or_create_company(db: Session, name: str | None, website: str | None, *, state=None, city=None,
-                          industry=None, timezone=None) -> Company | None:
+                          industry=None, timezone=None, create: bool = True) -> Company | None:
+    """The existing company matching the website's domain or the name; with ``create``, a new one if none matches."""
     domain = domain_of(website)
     company = None
     if domain:
@@ -53,7 +54,7 @@ def get_or_create_company(db: Session, name: str | None, website: str | None, *,
         )
     # Only a real name creates a company: a website alone links to an existing company but never invents one
     # (a domain-named company would otherwise surface as {{company_name}} in emails).
-    if company is None and name and name.strip():
+    if company is None and create and name and name.strip():
         company = Company(
             name=name.strip()[:300],
             website=website,
@@ -67,6 +68,19 @@ def get_or_create_company(db: Session, name: str | None, website: str | None, *,
         db.flush()
     elif company is not None and website and not company.website:
         company.website, company.domain = website, domain
+    return company
+
+
+def make_client(db: Session, contact: Contact) -> Company:
+    """A won prospect's business becomes a client company (or joins the existing one)."""
+    current = db.get(Company, contact.company_id) if contact.company_id else None
+    if current is not None and current.deleted_at is None:
+        return current
+    name = (contact.company_name or "").strip() or " ".join(
+        p for p in (contact.first_name, contact.last_name) if p) or contact.email
+    company = get_or_create_company(db, name, contact.website, state=contact.state, city=contact.city,
+                                    industry=contact.industry, timezone=contact.timezone)
+    contact.company_id = company.id
     return company
 
 
@@ -106,12 +120,16 @@ def apply_fields(db: Session, contact: Contact, data: dict, *, link_company: boo
     if data.get("company_id"):
         contact.company_id = data["company_id"]
     elif link_company and (contact.company_name or contact.website) and not contact.company_id:
+        # Companies are clients: a prospect only links to a company that already exists (e.g. a contact at a
+        # current client). Their business name stays on the prospect, which is what {{company_name}} uses.
         company = get_or_create_company(
             db, contact.company_name, contact.website, state=contact.state, city=contact.city,
-            industry=contact.industry, timezone=contact.timezone,
+            industry=contact.industry, timezone=contact.timezone, create=False,
         )
         if company:
             contact.company_id = company.id
+    if contact.lead_status == "won" and link_company:
+        make_client(db, contact)
     if data.get("tags") is not None:
         contact.tags = get_or_create_tags(db, data["tags"])
 
@@ -123,6 +141,8 @@ def set_lead_status(db: Session, contact: Contact, status: str, user: User | Non
     contact.lead_status = status
     log_activity(db, contact.id, "stage_change", f"Stage changed from {old} to {status}", user, old=old, new=status,
                  reason=reason)
+    if status == "won":
+        make_client(db, contact)
     _follow_status_on_board(db, contact, status)
     return True
 

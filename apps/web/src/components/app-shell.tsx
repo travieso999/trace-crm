@@ -28,6 +28,7 @@ import {
   Sparkles,
   Sun,
   Users,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -58,6 +59,7 @@ export const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
     items: [
       { href: "/opportunities", label: "Opportunities", icon: KanbanSquare },
       { href: "/prospects", label: "Prospects", icon: Users },
+      { href: "/lists", label: "Imported Lists", icon: FileSpreadsheet },
       { href: "/companies", label: "Companies", icon: Building2 },
     ],
   },

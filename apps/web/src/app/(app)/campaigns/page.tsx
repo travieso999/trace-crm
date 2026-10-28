@@ -2,18 +2,16 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { Plus, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { EmptyState, ErrorState, Field, NativeSelect, PageHeader, StatusBadge } from "@/components/common";
+import { EmptyState, ErrorState, NativeSelect, PageHeader, StatusBadge } from "@/components/common";
+import { NewCampaignDialog } from "@/components/campaign/new-campaign-dialog";
 import { useCanWrite } from "@/components/app-shell";
-import { api, errorMessage } from "@/lib/api";
+import { api } from "@/lib/api";
 import { num, pct, relTime } from "@/lib/format";
 import type { Campaign } from "@/lib/types";
 
@@ -26,38 +24,25 @@ const STATUS_FILTERS = [
   ["completed,stopped", "Finished"],
 ] as const;
 
-export default function CampaignsPage() {
-  const router = useRouter();
+function CampaignsList() {
+  const params = useSearchParams();
   const canWrite = useCanWrite();
   const [status, setStatus] = React.useState("");
   const [archived, setArchived] = React.useState(false);
-  const [creating, setCreating] = React.useState(false);
-  const [name, setName] = React.useState("");
-  const [saving, setSaving] = React.useState(false);
+  // ?new=1 (e.g. from Imported Lists) opens the new-campaign wizard
+  const [creating, setCreating] = React.useState(params.get("new") === "1");
 
   const list = useQuery({
     queryKey: ["campaigns", status, archived],
     queryFn: () => api<Campaign[]>("/api/campaigns", { query: { status, archived } }),
   });
 
-  async function create(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      const c = await api<Campaign>("/api/campaigns", { body: { name: name.trim() } });
-      router.push(`/campaigns/${c.id}?tab=sequence`);
-    } catch (err) {
-      toast.error(errorMessage(err));
-      setSaving(false);
-    }
-  }
-
   const items = list.data ?? [];
   return (
     <>
       <PageHeader
         title="Campaigns"
-        description="Sequences sent from your mailboxes to enrolled prospects."
+        description="Named groups of prospects, each with an initial email and follow-ups sent from your mailboxes."
         actions={
           canWrite && (
             <Button onClick={() => setCreating(true)}>
@@ -112,7 +97,7 @@ export default function CampaignsPage() {
                 <TableHead className="hidden text-right sm:table-cell">Sent</TableHead>
                 <TableHead className="hidden text-right md:table-cell">Replies</TableHead>
                 <TableHead className="hidden text-right md:table-cell">Reply rate</TableHead>
-                <TableHead className="hidden lg:table-cell">Steps</TableHead>
+                <TableHead className="hidden lg:table-cell">Emails</TableHead>
                 <TableHead className="hidden lg:table-cell">Created</TableHead>
               </TableRow>
             </TableHeader>
@@ -123,7 +108,11 @@ export default function CampaignsPage() {
                     <Link href={`/campaigns/${c.id}`} className="block truncate font-medium hover:underline">
                       {c.name}
                     </Link>
-                    {c.last_error && <div className="truncate text-xs text-destructive">{c.last_error}</div>}
+                    {c.last_error ? (
+                      <div className="truncate text-xs text-destructive">{c.last_error}</div>
+                    ) : (c.target_location || c.industry) && (
+                      <div className="truncate text-xs text-muted-foreground">{[c.industry, c.target_location].filter(Boolean).join(" · ")}</div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <StatusBadge status={c.status} />
@@ -141,26 +130,15 @@ export default function CampaignsPage() {
         </div>
       )}
 
-      <Dialog open={creating} onOpenChange={setCreating}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>New campaign</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={create} className="grid gap-4">
-            <Field label="Name" htmlFor="camp-name" hint="Only your team sees this.">
-              <Input id="camp-name" autoFocus maxLength={200} value={name} onChange={(e) => setName(e.target.value)} placeholder="Texas bail bonds — Q4" />
-            </Field>
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={() => setCreating(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={saving || !name.trim()}>
-                Create
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <NewCampaignDialog open={creating} onOpenChange={setCreating} />
     </>
+  );
+}
+
+export default function CampaignsPage() {
+  return (
+    <React.Suspense fallback={<Skeleton className="h-64" />}>
+      <CampaignsList />
+    </React.Suspense>
   );
 }

@@ -223,6 +223,33 @@ class Notification(UUIDPk, Base):
     email_error: Mapped[str | None] = mapped_column(Text)
 
 
+class ImportBatch(UUIDPk, Timestamps, SoftDelete, Base):
+    """One uploaded spreadsheet, kept as a reusable named list. Deleting it never deletes its contacts."""
+
+    __tablename__ = "import_batches"
+
+    name: Mapped[str] = mapped_column(String(200))
+    original_filename: Mapped[str | None] = mapped_column(String(300))
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    file_format: Mapped[str | None] = mapped_column(String(10))
+    total_rows: Mapped[int] = mapped_column(Integer, default=0)
+    # created / updated / existing / duplicate_in_file / invalid / suppressed row counts at import time
+    stats: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+
+
+# list membership: every valid row of the file, whether it created, updated or matched an existing prospect
+import_batch_members = Table(
+    "import_batch_members",
+    Base.metadata,
+    Column("batch_id", UUID(as_uuid=True), ForeignKey("import_batches.id", ondelete="CASCADE"), primary_key=True),
+    Column("contact_id", UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), primary_key=True,
+           index=True),
+    Column("outcome", String(20), nullable=False),  # new | update | existing
+    Column("row_number", Integer),
+)
+
+
 class WebsiteAudit(UUIDPk, Timestamps, Base):
     __tablename__ = "website_audits"
 

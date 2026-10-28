@@ -9,11 +9,13 @@ from app.models.crm import (
     CrmNoteRevision,
     CrmOpportunity,
     CrmTask,
+    ImportBatch,
     Notification,
     PipelineStage,
     Tag,
     WebsiteAudit,
     contact_tags,
+    import_batch_members,
 )
 from app.models.mail import (
     Campaign,
@@ -27,6 +29,7 @@ from app.models.mail import (
     SentMessage,
     SequenceStep,
     SuppressionEntry,
+    campaign_import_batches,
     campaign_mailboxes,
 )
 
@@ -48,6 +51,7 @@ __all__ = [
     "EmailAccount",
     "EmailEvent",
     "EmailTemplate",
+    "ImportBatch",
     "Notification",
     "OAuthState",
     "PipelineStage",
@@ -60,6 +64,8 @@ __all__ = [
     "User",
     "UserSession",
     "WebsiteAudit",
+    "campaign_import_batches",
     "campaign_mailboxes",
     "contact_tags",
+    "import_batch_members",
 ]

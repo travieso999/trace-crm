@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Eye, Inbox, Plus, Users, X } from "lucide-react";
+import { Inbox } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,208 +14,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState, Field, NativeSelect, Pagination, StatusBadge } from "@/components/common";
 import { ScheduleEditor } from "@/components/schedule-editor";
-import { LeadPreviewDialog } from "@/components/enroll-dialog";
 import { api, errorMessage } from "@/lib/api";
-import { dateTime, fullName, humanize, num, relTime } from "@/lib/format";
-import { LEAD_STATUSES, type Campaign, type CampaignLead, type CampaignMessage, type EmailAccount, type EnrollResult, type Page, type Schedule, type Tag } from "@/lib/types";
+import { dateTime, humanize, relTime } from "@/lib/format";
+import type { Campaign, CampaignMessage, EmailAccount, Page, Schedule } from "@/lib/types";
 
 const PAGE_SIZE = 50;
 const finished = (c: Campaign) => c.status === "completed" || c.status === "stopped";
-
-function AddLeadsDialog({ campaign, open, onOpenChange }: { campaign: Campaign; open: boolean; onOpenChange: (o: boolean) => void }) {
-  const qc = useQueryClient();
-  const tags = useQuery({ queryKey: ["contact-tags"], queryFn: () => api<Tag[]>("/api/contacts/tags"), enabled: open });
-  const [f, setF] = React.useState({ tag: "", lead_status: "new_lead", state: "", verification_status: "" });
-  const match = useQuery({
-    queryKey: ["contacts-count", f],
-    queryFn: () => api<Page<unknown>>("/api/contacts", { query: { ...f, page_size: 1 } }),
-    enabled: open,
-  });
-  const enroll = useMutation({
-    mutationFn: () =>
-      api<EnrollResult & { skipped_missing_fields?: number }>(`/api/campaigns/${campaign.id}/contacts`, { body: { ...f, only_ready: true } }),
-    onSuccess: (r) => {
-      const missing = r.skipped_missing_fields ?? 0;
-      const skipped = r.skipped_existing + r.skipped_suppressed + r.skipped_invalid + missing;
-      toast.success(`${num(r.enrolled)} prospect${r.enrolled === 1 ? "" : "s"} enrolled`, {
-        description: skipped
-          ? `Skipped ${r.skipped_existing} already enrolled, ${r.skipped_suppressed} suppressed, ${r.skipped_invalid} invalid or closed, ${missing} missing merge fields`
-          : undefined,
-      });
-      qc.invalidateQueries({ queryKey: ["campaign", campaign.id] });
-      qc.invalidateQueries({ queryKey: ["campaign-leads", campaign.id] });
-      qc.invalidateQueries({ queryKey: ["campaign-preflight", campaign.id] });
-      onOpenChange(false);
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Add prospects</DialogTitle>
-          <DialogDescription>
-            Enroll every prospect matching these filters. To pick individual prospects, select them on the{" "}
-            <Link href="/prospects" className="text-signal hover:underline">
-              Prospects
-            </Link>{" "}
-            page and use “Add to campaign”.
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="grid gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            enroll.mutate();
-          }}
-        >
-          <Field label="Tag" htmlFor="al-tag">
-            <NativeSelect id="al-tag" value={f.tag} onChange={(e) => setF({ ...f, tag: e.target.value })}>
-              <option value="">Any tag</option>
-              {(tags.data ?? []).map((t) => (
-                <option key={t.id} value={t.name}>
-                  {t.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Prospect status" htmlFor="al-status">
-              <NativeSelect id="al-status" value={f.lead_status} onChange={(e) => setF({ ...f, lead_status: e.target.value })}>
-                <option value="">Any</option>
-                {LEAD_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {humanize(s)}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field label="State" htmlFor="al-state">
-              <Input id="al-state" placeholder="TX, FL" value={f.state} onChange={(e) => setF({ ...f, state: e.target.value })} />
-            </Field>
-          </div>
-          <p className="text-sm text-muted-foreground" aria-live="polite">
-            {match.data ? `${num(match.data.total)} matching prospect${match.data.total === 1 ? "" : "s"}. Suppressed, invalid and closed prospects are skipped.` : " "}
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={enroll.isPending || !match.data?.total || !(f.tag || f.lead_status || f.state)}>
-              Enroll prospects
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-export function CampaignLeads({ campaign, canWrite }: { campaign: Campaign; canWrite: boolean }) {
-  const qc = useQueryClient();
-  const [status, setStatus] = React.useState("");
-  const [page, setPage] = React.useState(1);
-  const [adding, setAdding] = React.useState(false);
-  const [previewing, setPreviewing] = React.useState<string | null>(null);
-  const list = useQuery({
-    queryKey: ["campaign-leads", campaign.id, status, page],
-    queryFn: () => api<Page<CampaignLead>>(`/api/campaigns/${campaign.id}/contacts`, { query: { status, page, page_size: PAGE_SIZE } }),
-    placeholderData: keepPreviousData,
-  });
-  const remove = useMutation({
-    mutationFn: (contactId: string) => api(`/api/campaigns/${campaign.id}/contacts/${contactId}`, { method: "DELETE" }),
-    onSuccess: () => {
-      toast.success("Prospect removed; pending sends cancelled");
-      qc.invalidateQueries({ queryKey: ["campaign-leads", campaign.id] });
-      qc.invalidateQueries({ queryKey: ["campaign", campaign.id] });
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const items = list.data?.items ?? [];
-  return (
-    <div className="grid gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <NativeSelect aria-label="Enrollment status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}>
-          <option value="">All enrollments</option>
-          {["active", "replied", "completed", "bounced", "unsubscribed", "stopped", "removed", "error"].map((s) => (
-            <option key={s} value={s}>
-              {humanize(s)}
-            </option>
-          ))}
-        </NativeSelect>
-        {canWrite && !finished(campaign) && (
-          <Button onClick={() => setAdding(true)}>
-            <Plus /> Add prospects
-          </Button>
-        )}
-      </div>
-      {list.isError ? (
-        <ErrorState error={list.error} onRetry={() => list.refetch()} />
-      ) : list.isPending ? (
-        <Skeleton className="h-40" />
-      ) : items.length === 0 ? (
-        <EmptyState icon={Users} title={status ? "No prospects with this status" : "No prospects enrolled"} description={status ? undefined : "Add prospects to start the sequence for them."} />
-      ) : (
-        <>
-          <div className="rounded-xl border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Prospect</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="hidden sm:table-cell">Progress</TableHead>
-                  <TableHead className="hidden md:table-cell">Next send</TableHead>
-                  <TableHead className="hidden lg:table-cell">Mailbox</TableHead>
-                  <TableHead className="w-20"><span className="sr-only">Actions</span></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody className={list.isPlaceholderData ? "opacity-60" : undefined}>
-                {items.map((r) => (
-                  <TableRow key={r.contact_id}>
-                    <TableCell className="max-w-64">
-                      <Link href={`/prospects/${r.contact_id}`} className="block truncate font-medium hover:underline">
-                        {fullName(r)}
-                      </Link>
-                      <div className="truncate text-xs text-muted-foreground">{r.email}</div>
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={r.status} />
-                      {r.stop_reason && r.status !== "active" && (
-                        <div className="mt-0.5 text-xs text-muted-foreground">{humanize(r.stop_reason)}</div>
-                      )}
-                    </TableCell>
-                    <TableCell className="hidden tabular-nums sm:table-cell">
-                      {r.current_step} / {r.total_steps} sent
-                    </TableCell>
-                    <TableCell className="hidden text-muted-foreground md:table-cell" title={dateTime(r.next_send_at)}>
-                      {r.status === "active" ? (r.next_send_at ? relTime(r.next_send_at) : campaign.status === "active" ? "Queued" : "When started") : "—"}
-                    </TableCell>
-                    <TableCell className="hidden truncate text-muted-foreground lg:table-cell">{r.mailbox ?? "—"}</TableCell>
-                    <TableCell>
-                      <div className="flex justify-end gap-0.5">
-                        <Button variant="ghost" size="icon-sm" aria-label={`Preview emails for ${r.email}`} onClick={() => setPreviewing(r.contact_id)}>
-                          <Eye />
-                        </Button>
-                        {canWrite && r.status === "active" && (
-                          <Button variant="ghost" size="icon-sm" aria-label={`Remove ${r.email} from campaign`} onClick={() => remove.mutate(r.contact_id)}>
-                            <X />
-                          </Button>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          <Pagination page={page} pageSize={PAGE_SIZE} total={list.data.total} onPage={setPage} />
-        </>
-      )}
-      <AddLeadsDialog campaign={campaign} open={adding} onOpenChange={setAdding} />
-      <LeadPreviewDialog campaignId={campaign.id} contactId={previewing} onOpenChange={(o) => !o && setPreviewing(null)} />
-    </div>
-  );
-}
 
 function SimulateDialog({ message, onOpenChange }: { message: CampaignMessage | null; onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
@@ -362,6 +166,9 @@ type SettingsDraft = {
   fallbacks: string;
   stop_on_auto_reply: boolean;
   start_at: string;
+  campaign_type: string;
+  target_location: string;
+  industry: string;
 };
 
 function toDraft(c: Campaign): SettingsDraft {
@@ -376,6 +183,9 @@ function toDraft(c: Campaign): SettingsDraft {
     stop_on_auto_reply: c.stop_on_auto_reply,
     // datetime-local wants local time without zone
     start_at: c.start_at ? new Date(new Date(c.start_at).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "",
+    campaign_type: c.campaign_type ?? "",
+    target_location: c.target_location ?? "",
+    industry: c.industry ?? "",
   };
 }
 
@@ -410,6 +220,9 @@ export function CampaignSettings({ campaign, canWrite }: { campaign: Campaign; c
           variable_fallbacks: fallbacks,
           stop_on_auto_reply: draft.stop_on_auto_reply,
           start_at: draft.start_at ? new Date(draft.start_at).toISOString() : null,
+          campaign_type: draft.campaign_type,
+          target_location: draft.target_location,
+          industry: draft.industry,
         },
       });
     },
@@ -437,9 +250,20 @@ export function CampaignSettings({ campaign, canWrite }: { campaign: Campaign; c
           <Field label="Name" htmlFor="cs-name">
             <Input id="cs-name" maxLength={200} disabled={readOnly} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
           </Field>
-          <Field label="Notes" htmlFor="cs-desc">
+          <Field label="Description" htmlFor="cs-desc">
             <Textarea id="cs-desc" rows={2} disabled={readOnly} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
           </Field>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <Field label="Campaign type" htmlFor="cs-type">
+              <Input id="cs-type" maxLength={60} disabled={readOnly} value={draft.campaign_type} onChange={(e) => setDraft({ ...draft, campaign_type: e.target.value })} />
+            </Field>
+            <Field label="Target location" htmlFor="cs-loc">
+              <Input id="cs-loc" maxLength={120} disabled={readOnly} value={draft.target_location} onChange={(e) => setDraft({ ...draft, target_location: e.target.value })} />
+            </Field>
+            <Field label="Industry" htmlFor="cs-ind">
+              <Input id="cs-ind" maxLength={120} disabled={readOnly} value={draft.industry} onChange={(e) => setDraft({ ...draft, industry: e.target.value })} />
+            </Field>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <Field label="Daily limit (campaign)" htmlFor="cs-limit" hint="Mailbox limits also apply.">
               <Input id="cs-limit" type="number" min={1} max={1000} disabled={readOnly} value={draft.daily_limit}
@@ -488,6 +312,7 @@ export function CampaignSettings({ campaign, canWrite }: { campaign: Campaign; c
             <ScheduleEditor value={draft.schedule} disabled={readOnly} showRecipientTz onChange={(schedule) => setDraft({ ...draft, schedule })} />
           </CardContent>
         </Card>
+        <AudienceCard campaign={campaign} readOnly={readOnly} />
         <Card>
           <CardHeader>
             <CardTitle>Safety</CardTitle>
@@ -528,5 +353,56 @@ export function CampaignSettings({ campaign, canWrite }: { campaign: Campaign; c
         )}
       </div>
     </form>
+  );
+}
+
+function filterSummary(f: Campaign["audience_filter"]) {
+  const parts: string[] = [];
+  if (f.state) parts.push(`State ${f.state}`);
+  if (f.city) parts.push(`City ${f.city}`);
+  if (f.industry) parts.push(`Industry contains “${f.industry}”`);
+  if (f.tag) parts.push(`Tag ${f.tag}`);
+  if (f.batch_id) parts.push("From an imported list");
+  if (f.lead_status) parts.push(`Status ${humanize(f.lead_status)}`);
+  if (f.verification_status) parts.push(`Email ${f.verification_status}`);
+  if (f.participation) parts.push(f.participation === "never" ? "Never in a campaign" : "Was in a campaign");
+  for (const [k, v] of Object.entries(f.custom ?? {})) parts.push(`${k} = ${v}`);
+  return parts.join(" · ") || "No filters";
+}
+
+/** Fixed vs dynamic audience: a dynamic campaign keeps adding prospects that match its saved filters. */
+function AudienceCard({ campaign, readOnly }: { campaign: Campaign; readOnly: boolean }) {
+  const qc = useQueryClient();
+  const toFixed = useMutation({
+    mutationFn: () => api<Campaign>(`/api/campaigns/${campaign.id}`, { method: "PATCH", body: { audience_mode: "fixed" } }),
+    onSuccess: (c) => {
+      qc.setQueryData(["campaign", campaign.id], c);
+      toast.success("Audience is now fixed: no more prospects are added automatically");
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const dynamic = campaign.audience_mode === "dynamic";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Audience</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-2 text-sm">
+        <p>
+          <span className="font-medium">{dynamic ? "Dynamic" : "Fixed"}</span> —{" "}
+          {dynamic
+            ? "prospects matching these filters are added automatically while the campaign runs (removed prospects are never re-added):"
+            : "only the prospects you add. Use Add contacts → Smart filters to make it dynamic."}
+        </p>
+        {dynamic && <p className="rounded-md bg-muted px-2 py-1.5 text-muted-foreground">{filterSummary(campaign.audience_filter)}</p>}
+        {dynamic && !readOnly && (
+          <div>
+            <Button type="button" variant="outline" size="sm" disabled={toFixed.isPending} onClick={() => toFixed.mutate()}>
+              Stop adding automatically
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

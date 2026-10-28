@@ -4,14 +4,14 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import ValidationError
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import audit, reader, writer
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.models import Campaign, CampaignContact, Contact, CrmActivity, Tag, User, contact_tags
+from app.models import Campaign, CampaignContact, Contact, CrmActivity, Tag, User
 from app.models.base import utcnow
 from app.schemas.common import BulkResult, Message, Page
 from app.schemas.contacts import (
@@ -25,8 +25,10 @@ from app.schemas.contacts import (
     CsvPreviewOut,
     TagOut,
 )
+from app.services import audience, import_lists
 from app.services import campaigns as campaign_service
 from app.services import notes as note_service
+from app.services.audience import AudienceFilter, contacts_query
 from app.services.contacts import (
     IMPORT_FIELDS,
     apply_fields,
@@ -61,32 +63,23 @@ SORTS = {
 }
 
 
-def _filtered(q, lead_status, verification_status, state, tag, campaign_id, company_id):
-    stmt = select(Contact).where(Contact.deleted_at.is_(None))
-    if q:
-        like = f"%{q.strip().lower()}%"
-        stmt = stmt.where(
-            or_(
-                func.lower(Contact.email).like(like),
-                func.lower(Contact.first_name).like(like),
-                func.lower(Contact.last_name).like(like),
-                func.lower(Contact.company_name).like(like),
-                func.lower(Contact.city).like(like),
-            )
-        )
-    if lead_status:
-        stmt = stmt.where(Contact.lead_status.in_(lead_status.split(",")))
-    if verification_status:
-        stmt = stmt.where(Contact.verification_status == verification_status)
-    if state:
-        stmt = stmt.where(Contact.state.in_([s.upper() for s in state.split(",")]))
-    if tag:
-        stmt = stmt.where(Contact.id.in_(select(contact_tags.c.contact_id).join(Tag).where(Tag.name == tag)))
-    if campaign_id:
-        stmt = stmt.where(Contact.id.in_(select(CampaignContact.contact_id).where(CampaignContact.campaign_id == campaign_id)))
-    if company_id:
-        stmt = stmt.where(Contact.company_id == company_id)
-    return stmt
+def contact_filter(
+    q: str | None = None,
+    lead_status: str | None = None,
+    verification_status: str | None = None,
+    state: str | None = None,
+    city: str | None = None,
+    industry: str | None = None,
+    tag: str | None = None,
+    batch_id: uuid.UUID | None = None,
+    campaign_id: uuid.UUID | None = None,
+    not_in_campaign_id: uuid.UUID | None = None,
+    participation: str | None = Query(None, pattern="^(never|previous)$"),
+    company_id: uuid.UUID | None = None,
+) -> AudienceFilter:
+    return AudienceFilter(q=q, lead_status=lead_status, verification_status=verification_status, state=state,
+                          city=city, industry=industry, tag=tag, batch_id=batch_id, campaign_id=campaign_id,
+                          not_in_campaign_id=not_in_campaign_id, participation=participation, company_id=company_id)
 
 
 def _out(db: Session, contacts: list[Contact]) -> list[ContactOut]:
@@ -112,13 +105,7 @@ def _out(db: Session, contacts: list[Contact]) -> list[ContactOut]:
 
 @router.get("", response_model=Page[ContactOut])
 def list_contacts(
-    q: str | None = None,
-    lead_status: str | None = None,
-    verification_status: str | None = None,
-    state: str | None = None,
-    tag: str | None = None,
-    campaign_id: uuid.UUID | None = None,
-    company_id: uuid.UUID | None = None,
+    f: AudienceFilter = Depends(contact_filter),
     sort: str = "created_at",
     order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -126,7 +113,7 @@ def list_contacts(
     _: User = Depends(reader),
     db: Session = Depends(get_db),
 ):
-    stmt = _filtered(q, lead_status, verification_status, state, tag, campaign_id, company_id)
+    stmt = contacts_query(f)
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     col = SORTS.get(sort, Contact.created_at)
     stmt = stmt.order_by(col.desc().nulls_last() if order == "desc" else col.asc().nulls_last(), Contact.id)
@@ -134,22 +121,21 @@ def list_contacts(
     return Page(items=_out(db, items), total=total, page=page, page_size=page_size)
 
 
+@router.get("/count")
+def count_contacts(f: AudienceFilter = Depends(contact_filter), _: User = Depends(reader), db: Session = Depends(get_db)):
+    """How many prospects match (live count for smart filters)."""
+    return {"total": audience.count(db, f)}
+
+
 @router.get("/export")
 def export_contacts(
-    q: str | None = None,
-    lead_status: str | None = None,
-    verification_status: str | None = None,
-    state: str | None = None,
-    tag: str | None = None,
-    campaign_id: uuid.UUID | None = None,
-    company_id: uuid.UUID | None = None,
-    request: Request = None,
-    user: User = Depends(reader),
+    request: Request,
+    f: AudienceFilter = Depends(contact_filter),
+    user: User = Depends(writer),  # bulk download of prospect data: members and admins only
     db: Session = Depends(get_db),
 ):
-    stmt = _filtered(q, lead_status, verification_status, state, tag, campaign_id, company_id).order_by(Contact.created_at)
-    contacts = list(db.scalars(stmt.limit(100_000)))
-    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts))
+    contacts = list(db.scalars(contacts_query(f).order_by(Contact.created_at).limit(100_000)))
+    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts), filter=f.to_json())
     db.commit()
     return Response(
         export_contacts_csv(contacts),
@@ -350,32 +336,48 @@ async def import_commit(
     except (ValueError, ValidationError) as exc:
         raise HTTPException(422, f"Invalid import options: {exc}") from exc
     raw = await _read_upload(file)
+    sha = file_fingerprint(raw)
+    enrolled = None
     try:
-        headers, rows, _meta = parse_upload(file.filename or "", raw, get_settings().csv_max_rows)
-        result, touched = import_rows(
+        headers, rows, meta = parse_upload(file.filename or "", raw, get_settings().csv_max_rows)
+        result, touched, members = import_rows(
             db, headers, rows, opts.mapping, duplicate_strategy=opts.duplicate_strategy, tags=opts.tags,
             source=opts.source, user=user, dry_run=opts.dry_run,
         )
+        batch = None
+        if not opts.dry_run:
+            batch = import_lists.create(db, name=opts.list_name, filename=file.filename, sha256=sha,
+                                        file_format=meta["format"], total_rows=len(rows), result=result,
+                                        members=members, user=user)
         if opts.campaign_id and not opts.dry_run:
             campaign = db.get(Campaign, opts.campaign_id)
             if not campaign or campaign.deleted_at:
                 raise CsvError("Campaign not found")
-            campaign_service.enroll_contacts(db, campaign, touched, user)
+            # the whole list joins the campaign, including prospects that were already in the CRM
+            enrolled = campaign_service.enroll_contacts(db, campaign, list(dict.fromkeys(m[0] for m in members)), user)
+            import_lists.link_campaign(db, campaign.id, batch.id)
     except CsvError as exc:
         db.rollback()
         raise HTTPException(422, str(exc)) from exc
+    except campaign_service.CampaignError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from exc
     except Exception:
         db.rollback()
         raise
-    sha = file_fingerprint(raw)
     result["previous_import"] = previous_import(db, sha)
     if opts.dry_run:
         db.rollback()
     else:
         audit(db, user, "contacts.imported", "contact", None, request, created=result["created"],
-              updated=result["updated"], filename=file.filename, sha256=sha)
+              updated=result["updated"], filename=file.filename, sha256=sha, batch_id=str(batch.id),
+              campaign_id=str(opts.campaign_id) if opts.campaign_id else None)
         db.commit()
         result["contact_ids"] = touched
+        result["batch_id"] = batch.id
+        result["list_name"] = batch.name
+        result["list_contacts"] = len({m[0] for m in members})
+        result["enrollment"] = enrolled
     return CsvImportOut(**result)
 
 

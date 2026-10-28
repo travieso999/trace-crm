@@ -130,6 +130,7 @@ class CsvImportIn(BaseModel):
     tags: list[str] = []
     source: str | None = None
     campaign_id: uuid.UUID | None = None
+    list_name: str | None = Field(default=None, max_length=200)  # imported list name; defaults to the file name
     dry_run: bool = False
 
 
@@ -163,6 +164,10 @@ class CsvImportOut(BaseModel):
     contact_ids: list[uuid.UUID] = []  # imported/updated leads (empty for dry runs)
     previous_import: dict | None = None
     dry_run: bool
+    batch_id: uuid.UUID | None = None  # the imported list this upload became
+    list_name: str | None = None
+    list_contacts: int = 0
+    enrollment: dict | None = None  # campaign enrollment result when campaign_id was given
 
 
 class CompanyBase(BaseModel):

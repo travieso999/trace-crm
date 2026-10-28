@@ -294,8 +294,11 @@ def import_rows(
     source: str | None,
     user: User | None,
     dry_run: bool,
-) -> tuple[dict, list[uuid.UUID]]:
+) -> tuple[dict, list[uuid.UUID], list[tuple[uuid.UUID, str, int]]]:
     """Import inside the caller's transaction. Caller commits (or rolls back for dry runs).
+
+    Returns (result, touched, members): touched are the prospects created or updated; members are every valid
+    row's prospect as (contact_id, new | update | existing, row number), the imported list's membership.
 
     Every row gets a report entry: new | update | existing_skipped | duplicate_in_file | suppressed |
     invalid_email | missing_email | error, plus warnings (missing_first_name, missing_company_name, name notes).
@@ -340,6 +343,7 @@ def import_rows(
     } if emails else {}
     extra_tags = get_or_create_tags(db, tags) if tags else []
     touched: list[uuid.UUID] = []
+    members: list[tuple[uuid.UUID, str, int]] = []
 
     for row_no, email, data, notes in prepared:
         if email in suppressed:
@@ -353,6 +357,7 @@ def import_rows(
         if contact is not None and duplicate_strategy == "skip":
             result["skipped_duplicates"] += 1
             add(row_no, email, data, "existing_skipped", notes)
+            members.append((contact.id, "existing", row_no))
             continue
         try:
             with db.begin_nested():
@@ -373,6 +378,7 @@ def import_rows(
                 contact.tags = list(all_tags.values())
                 db.flush()
                 touched.append(contact.id)
+                members.append((contact.id, status, row_no))
         except Exception as exc:  # row-level DB error (e.g. constraint) – report, keep going
             result["errors"].append({"row": row_no, "email": email, "error": f"Database error: {type(exc).__name__}"})
             result["invalid"] += 1
@@ -396,7 +402,7 @@ def import_rows(
     result["rows"] = report[:REPORT_ROWS]
     result["rows_truncated"] = len(report) > REPORT_ROWS
     result["dry_run"] = dry_run
-    return result, touched
+    return result, touched, members
 
 
 def export_contacts_csv(contacts: list[Contact]) -> str:

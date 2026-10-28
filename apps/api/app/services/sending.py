@@ -11,9 +11,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.core.config import get_settings
 from app.core.crypto import sign
@@ -161,11 +161,19 @@ def pick_mailbox(db: Session, campaign: Campaign, now: datetime) -> uuid.UUID | 
 def dispatch_due(db: Session, now: datetime | None = None) -> list[uuid.UUID]:
     """Queue the next step for every due lead, then return queued messages that are due to send."""
     now = now or utcnow()
+    # the prospect's next step must be sendable: active, and past its "not before" date. Prospects waiting on a
+    # draft or paused step stay where they are (nothing is skipped) and are not even selected, so they never
+    # crowd out prospects that can send. No next step at all means the sequence is finished.
+    next_step = aliased(SequenceStep)
     due = list(db.scalars(
         select(CampaignContact)
         .join(Campaign, Campaign.id == CampaignContact.campaign_id)
+        .outerjoin(next_step, and_(next_step.campaign_id == CampaignContact.campaign_id,
+                                   next_step.position == CampaignContact.current_step + 1))
         .where(CampaignContact.status == "active", CampaignContact.next_send_at <= now,
-               Campaign.status == "active", Campaign.deleted_at.is_(None))
+               Campaign.status == "active", Campaign.deleted_at.is_(None),
+               or_(next_step.id.is_(None),
+                   and_(next_step.status == "active", or_(next_step.send_at.is_(None), next_step.send_at <= now))))
         .order_by(CampaignContact.next_send_at)
         .limit(BATCH)
         .with_for_update(of=CampaignContact, skip_locked=True)

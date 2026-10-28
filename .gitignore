@@ -26,3 +26,6 @@ backups/
 *.log
 
 .vercel
+
+# personal Claude Code settings
+.claude/settings.local.json

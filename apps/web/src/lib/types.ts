@@ -89,7 +89,7 @@ export type Schedule = {
 
 export type EmailAccount = {
   id: string;
-  provider: "gmail" | "microsoft" | "sandbox";
+  provider: "gmail" | "microsoft" | "sandbox" | "smtp";
   email: string;
   display_name: string | null;
   status: "connected" | "paused" | "auth_error" | "error" | "disconnected";
@@ -105,6 +105,8 @@ export type EmailAccount = {
   last_error_at: string | null;
   token_expires_at: string | null;
   scopes: string | null;
+  /** smtp mailboxes only; the password is never returned */
+  server: SmtpServer | null;
   created_at: string;
   sent_today: number;
   sent_total: number;
@@ -207,6 +209,15 @@ export type Dashboard = {
   }[];
 };
 
+export type SmtpServer = {
+  smtp_host: string;
+  smtp_port: number;
+  smtp_security: "ssl" | "starttls";
+  imap_host: string;
+  imap_port: number;
+  username?: string;
+};
+
 type ProviderInfo = {
   available: boolean;
   configured: boolean;
@@ -214,9 +225,10 @@ type ProviderInfo = {
   outbox_dir?: string | null;
   redirect_uri?: string;
   scopes?: string[];
+  presets?: Record<string, Omit<SmtpServer, "username">>;
 };
 
-export type MailProviders = Record<"gmail" | "microsoft" | "sandbox", ProviderInfo> & {
+export type MailProviders = Record<"gmail" | "microsoft" | "sandbox" | "smtp", ProviderInfo> & {
   real_sending: "disabled" | "test_only" | "enabled";
 };
 

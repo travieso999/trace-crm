@@ -41,4 +41,17 @@ def get_provider(account: EmailAccount, purpose: str | None = None) -> MailProvi
 
         # evaluated per message, with its recipient, at the moment of sending
         return GmailProvider(account.id, send_block_reason=lambda to: send_block_reason(account, purpose, to or ""))
+    if account.provider == "smtp":
+        from app.core.crypto import CryptoError, decrypt
+        from app.providers.base import ProviderAuthError
+        from app.providers.smtp import ServerConfig, SmtpImapProvider
+
+        if not account.server or not account.password_enc:
+            raise ProviderAuthError("No mail server password stored; reconnect this mailbox")
+        try:
+            password = decrypt(account.password_enc)
+        except CryptoError as exc:
+            raise ProviderAuthError("Stored mailbox password can't be decrypted (TOKEN_ENCRYPTION_KEYS changed?)") from exc
+        return SmtpImapProvider(account.email, ServerConfig.from_account(account.server, password),
+                                send_block_reason=lambda to: send_block_reason(account, purpose, to or ""))
     raise ProviderUnavailable(f"The {account.provider} adapter is not configured in this deployment")

@@ -100,6 +100,16 @@ Legend: [x] done & verified Â· [~] implemented, awaiting external verification Â
       inbox: `python -m app.cli inbox-cleanup [--apply]` hid 6 non-campaign conversations on the dev DB
 - [x] Verified 2026-10-27: pytest 80 passed (tests/test_inbox_filtering.py, 3 new Gmail test-email tests); ruff,
       `alembic check`, tsc, eslint, `next build` clean
+- [x] SMTP + IMAP mailboxes (2026-10-27), for Hostinger and other password-based email:
+      - `POST /api/email-accounts/smtp` checks the SMTP and IMAP logins, then stores the password Fernet-encrypted
+        (Hostinger preset: smtp.hostinger.com:465, imap.hostinger.com:993)
+      - Sends over SMTP with a copy in the IMAP Sent folder; reads replies from INBOX without marking them read
+        (UID cursor from connect time); matches replies by In-Reply-To/References
+      - A failure during SMTP DATA counts as sent on reconcile rather than risk a duplicate
+      - A rejected password means auth_error and a Reconnect button
+      - Migration 5cbac32cf346
+      - Verified: pytest 115 passed (9 new in tests/test_smtp.py); ruff, tsc, eslint and `next build` clean
+      - Live on production: migration applied, providers endpoint and validation checked
 - [ ] Microsoft Graph adapter + OAuth
 - [ ] Reply/mailbox-error email notifications (settings saved, not sent yet)
 

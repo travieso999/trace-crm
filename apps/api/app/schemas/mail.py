@@ -58,6 +58,7 @@ class EmailAccountOut(ORMModel):
     last_error_at: datetime | None
     token_expires_at: datetime | None
     scopes: str | None
+    server: dict | None = None  # smtp mailboxes: hosts and ports (the password is never returned)
     created_at: datetime
     sent_today: int = 0
     sent_total: int = 0

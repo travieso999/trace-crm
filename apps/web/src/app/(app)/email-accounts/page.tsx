@@ -18,9 +18,13 @@ import { ScheduleEditor, scheduleSummary } from "@/components/schedule-editor";
 import { useIsAdmin } from "@/components/app-shell";
 import { api, errorMessage } from "@/lib/api";
 import { relTime } from "@/lib/format";
-import type { EmailAccount, MailProviders, Schedule } from "@/lib/types";
+import type { EmailAccount, MailProviders, Schedule, SmtpServer } from "@/lib/types";
 
-const PROVIDER_LABEL: Record<EmailAccount["provider"], string> = { gmail: "Gmail", microsoft: "Microsoft 365", sandbox: "Sandbox" };
+const PROVIDER_LABEL: Record<EmailAccount["provider"], string> = { gmail: "Gmail", microsoft: "Microsoft 365", sandbox: "Sandbox", smtp: "SMTP / IMAP" };
+
+function providerLabel(a: EmailAccount) {
+  return a.provider === "smtp" && a.server?.smtp_host.endsWith("hostinger.com") ? "Hostinger" : PROVIDER_LABEL[a.provider];
+}
 
 function UsageBar({ used, limit }: { used: number; limit: number }) {
   const pct = Math.min(100, limit ? (used / limit) * 100 : 0);
@@ -40,7 +44,7 @@ function UsageBar({ used, limit }: { used: number; limit: number }) {
 }
 
 const SENDING_MODE: Record<MailProviders["real_sending"], string> = {
-  disabled: "Real sending is off on this server (REAL_SENDING=disabled): nothing will be sent from Gmail.",
+  disabled: "Real sending is off on this server (REAL_SENDING=disabled): nothing will be sent from real mailboxes.",
   test_only: "Test-only mode (REAL_SENDING=test_only): test emails, campaigns and replies are sent only to addresses in ALLOWED_TEST_RECIPIENTS. Anyone else is held back.",
   enabled: "Real sending is ON (REAL_SENDING=enabled): active campaigns will send from this mailbox.",
 };
@@ -97,7 +101,135 @@ function OAuthResult() {
   return null;
 }
 
-function ConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+type SmtpDraft = SmtpServer & { preset: string; email: string; display_name: string; username: string; password: string };
+
+const EMPTY_SMTP: SmtpDraft = {
+  preset: "hostinger", email: "", display_name: "", username: "", password: "",
+  smtp_host: "", smtp_port: 465, smtp_security: "ssl", imap_host: "", imap_port: 993,
+};
+
+/** Connect (or reconnect, when ``account`` is set) a mailbox by password over SMTP + IMAP, e.g. Hostinger email.
+ * The server signs in to both before saving and stores the password encrypted. */
+function SmtpDialog({ open, account, onOpenChange }: { open: boolean; account: EmailAccount | null; onOpenChange: (o: boolean) => void }) {
+  const qc = useQueryClient();
+  const providers = useQuery({ queryKey: ["mail-providers"], queryFn: () => api<MailProviders>("/api/email-accounts/providers"), enabled: open });
+  const [draft, setDraft] = React.useState<SmtpDraft>(EMPTY_SMTP);
+  const [forKey, setForKey] = React.useState<string | null>(null);
+  const key = open ? (account?.id ?? "new") : null;
+  if (key !== forKey) {
+    setForKey(key);
+    const s = account?.server;
+    setDraft(
+      s
+        ? { ...EMPTY_SMTP, ...s, preset: s.smtp_host.endsWith("hostinger.com") ? "hostinger" : "custom", email: account!.email,
+            display_name: account!.display_name ?? "", username: s.username && s.username !== account!.email ? s.username : "" }
+        : EMPTY_SMTP,
+    );
+  }
+  const custom = draft.preset === "custom";
+  const set = (patch: Partial<SmtpDraft>) => setDraft((d) => ({ ...d, ...patch }));
+  const save = useMutation({
+    mutationFn: () =>
+      api<EmailAccount>("/api/email-accounts/smtp", {
+        body: {
+          email: draft.email, display_name: draft.display_name, password: draft.password, username: draft.username || null, preset: draft.preset,
+          ...(custom ? { smtp_host: draft.smtp_host, smtp_port: draft.smtp_port, smtp_security: draft.smtp_security, imap_host: draft.imap_host, imap_port: draft.imap_port } : {}),
+        },
+      }),
+    onSuccess: (a) => {
+      toast.success(`${account ? "Reconnected" : "Connected"}: ${a.email}`, { description: "Replies will sync from now on." });
+      qc.invalidateQueries({ queryKey: ["email-accounts"] });
+      onOpenChange(false);
+    },
+    onError: (e) => toast.error("Mailbox was not connected", { description: errorMessage(e), duration: 15000 }),
+  });
+  const presets = providers.data?.smtp.presets ?? {};
+  const ready = draft.email.trim() && draft.password && (!custom || (draft.smtp_host.trim() && draft.imap_host.trim()));
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{account ? "Reconnect mailbox" : "Connect Hostinger or other email"}</DialogTitle>
+          <DialogDescription>
+            Sends through your mail server (SMTP) and reads replies from your inbox (IMAP). Only mail arriving after you connect is
+            processed, and nothing is marked as read.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="grid gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (ready) save.mutate();
+          }}
+        >
+          <Field label="Email provider" htmlFor="smtp-preset">
+            <NativeSelect id="smtp-preset" className="w-full" value={draft.preset} onChange={(e) => set({ preset: e.target.value })}>
+              {"hostinger" in presets || !providers.data ? <option value="hostinger">Hostinger</option> : null}
+              <option value="custom">Other provider (enter server settings)</option>
+            </NativeSelect>
+          </Field>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Email address" htmlFor="smtp-email">
+              <Input id="smtp-email" type="email" autoComplete="off" placeholder="you@yourdomain.com" value={draft.email} readOnly={!!account}
+                onChange={(e) => set({ email: e.target.value })} />
+            </Field>
+            <Field label="Sender name" htmlFor="smtp-name">
+              <Input id="smtp-name" placeholder="Sam at Trace" value={draft.display_name} onChange={(e) => set({ display_name: e.target.value })} />
+            </Field>
+          </div>
+          <Field label="Mailbox password" htmlFor="smtp-password" hint="The password of this email account (in Hostinger: Emails → your mailbox). Stored encrypted.">
+            <Input id="smtp-password" type="password" autoComplete="new-password" value={draft.password} onChange={(e) => set({ password: e.target.value })} />
+          </Field>
+          {custom && (
+            <div className="grid gap-3 rounded-lg border p-3">
+              <div className="grid grid-cols-[1fr_6rem_8rem] gap-2">
+                <Field label="SMTP server" htmlFor="smtp-host">
+                  <Input id="smtp-host" placeholder="smtp.example.com" value={draft.smtp_host} onChange={(e) => set({ smtp_host: e.target.value })} />
+                </Field>
+                <Field label="Port" htmlFor="smtp-port">
+                  <Input id="smtp-port" type="number" min={1} max={65535} value={draft.smtp_port} onChange={(e) => set({ smtp_port: Number(e.target.value) })} />
+                </Field>
+                <Field label="Security" htmlFor="smtp-sec">
+                  <NativeSelect id="smtp-sec" className="w-full" value={draft.smtp_security} onChange={(e) => set({ smtp_security: e.target.value as SmtpServer["smtp_security"] })}>
+                    <option value="ssl">SSL/TLS</option>
+                    <option value="starttls">STARTTLS</option>
+                  </NativeSelect>
+                </Field>
+              </div>
+              <div className="grid grid-cols-[1fr_6rem] gap-2">
+                <Field label="IMAP server (SSL)" htmlFor="imap-host">
+                  <Input id="imap-host" placeholder="imap.example.com" value={draft.imap_host} onChange={(e) => set({ imap_host: e.target.value })} />
+                </Field>
+                <Field label="Port" htmlFor="imap-port">
+                  <Input id="imap-port" type="number" min={1} max={65535} value={draft.imap_port} onChange={(e) => set({ imap_port: Number(e.target.value) })} />
+                </Field>
+              </div>
+              <Field label="Username" htmlFor="smtp-user" hint="Leave empty if it is the email address.">
+                <Input id="smtp-user" autoComplete="off" value={draft.username} onChange={(e) => set({ username: e.target.value })} />
+              </Field>
+            </div>
+          )}
+          {!custom && presets.hostinger && (
+            <p className="text-xs text-muted-foreground">
+              Uses {presets.hostinger.smtp_host}:{presets.hostinger.smtp_port} (SSL) to send and {presets.hostinger.imap_host}:{presets.hostinger.imap_port} for replies.
+            </p>
+          )}
+          {providers.data && <p className="text-xs text-muted-foreground">{SENDING_MODE[providers.data.real_sending]}</p>}
+          <div className="flex justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!ready || save.isPending}>
+              {save.isPending ? "Checking sign-in…" : account ? "Reconnect" : "Connect"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ConnectDialog({ open, onOpenChange, onSmtp }: { open: boolean; onOpenChange: (o: boolean) => void; onSmtp: () => void }) {
   const qc = useQueryClient();
   const providers = useQuery({ queryKey: ["mail-providers"], queryFn: () => api<MailProviders>("/api/email-accounts/providers"), enabled: open });
   const [email, setEmail] = React.useState("");
@@ -119,9 +251,20 @@ function ConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Connect a mailbox</DialogTitle>
-          <DialogDescription>Trace CRM sends from your own mailboxes through their official APIs.</DialogDescription>
+          <DialogDescription>Trace CRM sends from your own mailboxes, through their official APIs or your mail server.</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
+          <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+            <div>
+              <div className="text-sm font-medium">Hostinger / other email (SMTP + IMAP)</div>
+              <div className="text-xs text-muted-foreground">
+                {!p ? "Checking…" : p.smtp.available ? "Connect with your email address and mailbox password." : p.smtp.reason}
+              </div>
+            </div>
+            <Button size="sm" disabled={!p?.smtp.available} onClick={onSmtp}>
+              Connect
+            </Button>
+          </div>
           <div className="grid gap-2 rounded-lg border p-3">
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -331,7 +474,9 @@ function TestEmailDialog({ account, onOpenChange }: { account: EmailAccount | nu
   );
 }
 
-function AccountCard({ a, isAdmin, onEdit, onTest, onDisconnect }: { a: EmailAccount; isAdmin: boolean; onEdit: () => void; onTest: () => void; onDisconnect: () => void }) {
+function AccountCard({ a, isAdmin, onEdit, onTest, onDisconnect, onReconnect }: {
+  a: EmailAccount; isAdmin: boolean; onEdit: () => void; onTest: () => void; onDisconnect: () => void; onReconnect: () => void;
+}) {
   const qc = useQueryClient();
   const act = useMutation({
     mutationFn: (action: "pause" | "resume" | "sync") => api<unknown>(`/api/email-accounts/${a.id}/${action}`, { method: "POST" }),
@@ -350,7 +495,7 @@ function AccountCard({ a, isAdmin, onEdit, onTest, onDisconnect }: { a: EmailAcc
           <CardTitle className="truncate text-base">{a.email}</CardTitle>
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <StatusBadge status={a.status} />
-            <span>{PROVIDER_LABEL[a.provider]}</span>
+            <span>{providerLabel(a)}</span>
             {a.display_name && <span>· {a.display_name}</span>}
           </div>
         </div>
@@ -415,6 +560,14 @@ function AccountCard({ a, isAdmin, onEdit, onTest, onDisconnect }: { a: EmailAcc
             <ConnectGmailButton reconnectId={a.id} label="Reconnect" />
           </div>
         )}
+        {a.provider === "smtp" && a.status === "auth_error" && isAdmin && (
+          <div className="flex items-center justify-between gap-2 rounded-md border border-destructive/30 px-2 py-1.5 text-xs">
+            <span>The mail server no longer accepts the stored password.</span>
+            <Button size="sm" onClick={onReconnect}>
+              Reconnect
+            </Button>
+          </div>
+        )}
         {(a.last_error || circuitOpen) && (
           <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-xs text-destructive" role="status">
             {circuitOpen ? `Paused after repeated failures until ${new Date(a.circuit_open_until!).toLocaleTimeString()}. ` : ""}
@@ -436,6 +589,8 @@ export default function EmailAccountsPage() {
   const [editing, setEditing] = React.useState<EmailAccount | null>(null);
   const [testing, setTesting] = React.useState<EmailAccount | null>(null);
   const [disconnecting, setDisconnecting] = React.useState<EmailAccount | null>(null);
+  // "new" opens the SMTP dialog empty; an account opens it to reconnect that mailbox
+  const [smtpFor, setSmtpFor] = React.useState<EmailAccount | "new" | null>(null);
   const disconnect = useMutation({
     mutationFn: (id: string) => api<{ message: string }>(`/api/email-accounts/${id}`, { method: "DELETE" }),
     onSuccess: (r) => {
@@ -498,11 +653,20 @@ export default function EmailAccountsPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {list.data.map((a) => (
-            <AccountCard key={a.id} a={a} isAdmin={isAdmin} onEdit={() => setEditing(a)} onTest={() => setTesting(a)} onDisconnect={() => setDisconnecting(a)} />
+            <AccountCard key={a.id} a={a} isAdmin={isAdmin} onEdit={() => setEditing(a)} onTest={() => setTesting(a)}
+              onDisconnect={() => setDisconnecting(a)} onReconnect={() => setSmtpFor(a)} />
           ))}
         </div>
       )}
-      <ConnectDialog open={connecting} onOpenChange={setConnecting} />
+      <ConnectDialog
+        open={connecting}
+        onOpenChange={setConnecting}
+        onSmtp={() => {
+          setConnecting(false);
+          setSmtpFor("new");
+        }}
+      />
+      <SmtpDialog open={smtpFor !== null} account={smtpFor === "new" ? null : smtpFor} onOpenChange={(o) => !o && setSmtpFor(null)} />
       <SettingsDialog account={editing} onOpenChange={(o) => !o && setEditing(null)} />
       <TestEmailDialog account={testing} onOpenChange={(o) => !o && setTesting(null)} />
       <ConfirmDialog
@@ -510,7 +674,8 @@ export default function EmailAccountsPage() {
         onOpenChange={(o) => !o && setDisconnecting(null)}
         title={`Disconnect ${disconnecting?.email}?`}
         description={`It stops sending and syncing and is removed from its campaigns.${
-          disconnecting?.provider === "gmail" ? " Access is also revoked at Google and the stored tokens are deleted." : ""
+          disconnecting?.provider === "gmail" ? " Access is also revoked at Google and the stored tokens are deleted."
+            : disconnecting?.provider === "smtp" ? " The stored mailbox password is deleted." : ""
         } Sent history and conversations are kept.`}
         confirmLabel="Disconnect"
         destructive

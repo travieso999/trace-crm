@@ -106,7 +106,7 @@ def test_xlsx_preview_dry_run_report_and_import(client, db):
     dave = db.scalar(select(Contact).where(Contact.email == "dave@bluebonnet.com"))
     assert dave.company_id is None and dave.company_name is None and template_variables(dave)["company_name"] == ""
     assert dave.custom_fields["source_name"] == "Smith, Dave"  # original preserved
-    assert sorted(db.scalars(select(Company.name))) == ["Gulf Coast Bail", "Lone Star Bail Bonds"]
+    assert list(db.scalars(select(Company.name))) == []  # business names stay on the prospects
 
     # uploading the same file again is flagged and imports nothing new
     again = client.post("/api/contacts/import/preview", files={"file": ("copy.xlsx", data, "application/octet-stream")}).json()

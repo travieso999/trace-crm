@@ -26,7 +26,9 @@ def test_create_list_get_update_delete(client):
     c = r.json()
     assert c["email"] == "owner@example.com"
     assert c["state"] == "TX" and c["timezone"] == "America/Chicago"
-    assert c["company_id"] and {t["name"] for t in c["tags"]} == {"hot", "tx"}
+    # companies are clients: a new prospect keeps its business name but creates no company
+    assert c["company_id"] is None and c["company_name"] == "Ann Bail Bonds"
+    assert {t["name"] for t in c["tags"]} == {"hot", "tx"}
     assert client.post("/api/contacts", json={"email": "owner@example.com"}).status_code == 409
 
     lst = client.get("/api/contacts", params={"q": "ann"}).json()
@@ -79,7 +81,7 @@ def test_csv_import_dry_run_then_commit(client):
     assert john["source"] == "test-list" and [t["name"] for t in john["tags"]] == ["import-1"]
     assert jane["website"] == "https://www.xyzbonds.com"
     companies = client.get("/api/companies").json()
-    assert companies["total"] == 2
+    assert companies["total"] == 0  # imports never create companies
 
     # re-import: duplicates skipped by default, updated when requested
     assert _import(client).json()["skipped_duplicates"] >= 2
@@ -152,3 +154,36 @@ def test_dashboard_empty_state(client):
     assert d["kpis"]["total_contacts"] == 0 and d["kpis"]["sent_today"] == 0
     assert len(d["daily_volume"]) == 30
     assert d["upcoming"] == [] and d["recent_activity"] == []
+
+
+def test_companies_are_clients_won_prospects_become_companies(client, db):
+    from app.models import AuditLog, Company, Contact
+
+    # an existing client: a new contact at that business links to it, but unknown businesses create nothing
+    cid = client.post("/api/companies", json={"name": "Liberty Bail", "website": "https://libertybail.com"}).json()["id"]
+    a = client.post("/api/contacts", json={"email": "amy@libertybail.com", "company_name": "Liberty Bail"}).json()
+    b = client.post("/api/contacts", json={"email": "bo@newbail.com", "company_name": "New Bail Co",
+                                           "first_name": "Bo"}).json()
+    assert a["company_id"] == cid and b["company_id"] is None
+    assert client.get("/api/companies").json()["total"] == 1
+
+    # marking a prospect Won makes their business a client
+    assert client.patch(f"/api/contacts/{b['id']}", json={"lead_status": "won"}).status_code == 200
+    won = client.get(f"/api/contacts/{b['id']}").json()
+    assert won["company_id"] and client.get(f"/api/companies/{won['company_id']}").json()["name"] == "New Bail Co"
+
+    # cleanup: archives auto-created companies, keeps manual ones and clients with a won prospect
+    db.add(Company(name="Imported Only Bail"))
+    db.commit()
+    stray = db.query(Company).filter_by(name="Imported Only Bail").one()
+    db.add(Contact(email="x@importedonly.com", company_name="Imported Only Bail", company_id=stray.id, custom_fields={}))
+    db.commit()
+    from app.cli import companies_cleanup
+
+    companies_cleanup(apply=True)
+    db.expire_all()
+    names = sorted(c.name for c in db.query(Company).filter(Company.deleted_at.is_(None)))
+    assert names == ["Liberty Bail", "New Bail Co"]
+    x = db.query(Contact).filter_by(email="x@importedonly.com").one()
+    assert x.company_id is None and x.company_name == "Imported Only Bail"  # prospect keeps its business name
+    assert db.query(AuditLog).filter_by(action="company.created").count() == 1

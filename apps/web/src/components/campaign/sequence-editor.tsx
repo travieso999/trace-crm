@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ConfirmDialog, ErrorState, Field, NativeSelect, Spinner } from "@/components/common";
 import { stepLabel } from "@/components/campaign/labels";
+import { AttachmentChip, VideoSection, WarningList } from "@/components/campaign/video-section";
 import { useMe } from "@/components/app-shell";
 import { EmailFrame } from "@/components/email-frame";
 import { api, errorMessage } from "@/lib/api";
@@ -145,6 +146,7 @@ function StepCard({
   index,
   count,
   readOnly,
+  campaignId,
   variables,
   templates,
   onChange,
@@ -157,6 +159,7 @@ function StepCard({
   index: number;
   count: number;
   readOnly: boolean;
+  campaignId: string;
   variables: string[];
   templates: Template[];
   onChange: (s: Step) => void;
@@ -272,6 +275,7 @@ function StepCard({
           <Textarea ref={bodyRef} id={`body-${index}`} rows={8} maxLength={20000} disabled={readOnly} value={step.body}
             onChange={(e) => onChange({ ...step, body: e.target.value })} className="font-mono text-[13px]" />
         </Field>
+        <VideoSection step={step} index={index} readOnly={readOnly} campaignId={campaignId} onChange={onChange} />
         {!readOnly && (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <VariableButtons names={variables} onInsert={insert} />
@@ -308,7 +312,7 @@ function TestSendDialog({ step, campaignId, onOpenChange }: { step: Step | null;
   const send = useMutation({
     mutationFn: () =>
       api<{ message: string }>("/api/campaigns/test-send", {
-        body: { subject: step!.subject, body: step!.body, campaign_id: campaignId, to_email: to || me.data?.user.email, email_account_id: box || connected[0]?.id },
+        body: { subject: step!.subject, body: step!.body, campaign_id: campaignId, to_email: to || me.data?.user.email, email_account_id: box || connected[0]?.id, video_asset_id: step!.video_asset_id ?? null, video_preview: !!step!.video_preview, video_attach: !!step!.video_attach },
       }),
     onSuccess: (r) => {
       toast.success(r.message);
@@ -323,6 +327,11 @@ function TestSendDialog({ step, campaignId, onOpenChange }: { step: Step | null;
           <DialogTitle>Send a test</DialogTitle>
           <DialogDescription>Rendered with the first enrolled prospect’s data (or a sample prospect). Only addresses in ALLOWED_TEST_RECIPIENTS can receive tests (sandbox mailboxes also accept app users).</DialogDescription>
         </DialogHeader>
+        {step?.video_attach && (
+          <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">
+            This test includes the real MP4 and can take a minute. When it arrives, check the attachment shows with the right name and size, then download it and play it. Do this before using the video in a campaign.
+          </p>
+        )}
         <form
           className="grid gap-4"
           onSubmit={(e) => {
@@ -383,10 +392,10 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
 
   const previewStep = steps[Math.min(previewIdx, steps.length - 1)];
   const preview = useQuery({
-    queryKey: ["preview", campaign.id, previewStep?.subject, previewStep?.body, previewIdx],
+    queryKey: ["preview", campaign.id, previewStep?.subject, previewStep?.body, previewIdx, previewStep?.video_asset_id, previewStep?.video_preview, previewStep?.video_attach],
     queryFn: () =>
       api<PreviewResult>("/api/campaigns/preview", {
-        body: { subject: previewIdx > 0 && previewStep.reply_in_thread ? "Re: " + (steps[0]?.subject ?? "") : previewStep.subject, body: previewStep.body, campaign_id: campaign.id },
+        body: { subject: previewIdx > 0 && previewStep.reply_in_thread ? "Re: " + (steps[0]?.subject ?? "") : previewStep.subject, body: previewStep.body, campaign_id: campaign.id, video_asset_id: previewStep.video_asset_id ?? null, video_preview: !!previewStep.video_preview, video_attach: !!previewStep.video_attach },
       }),
     enabled: !!previewStep && !!previewStep.body.trim(),
   });
@@ -396,8 +405,9 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
       api<Campaign>(`/api/campaigns/${campaign.id}/steps`, {
         method: "PUT",
         body: {
-          steps: steps.map(({ id, delay_days, business_days, subject, body, reply_in_thread, name, status, send_at }) => ({
+          steps: steps.map(({ id, delay_days, business_days, subject, body, reply_in_thread, name, status, send_at, video_asset_id, video_preview, video_attach }) => ({
             id, delay_days, business_days, subject, body, reply_in_thread, name: name?.trim() || null, status: status ?? "active", send_at: send_at ?? null,
+            video_asset_id: video_asset_id ?? null, video_preview: !!video_preview, video_attach: !!video_attach,
           })),
         },
       }),
@@ -431,6 +441,7 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
             index={i}
             count={steps.length}
             readOnly={readOnly}
+            campaignId={campaign.id}
             variables={variables}
             templates={templates.data ?? []}
             onChange={(n) => update(i, n)}
@@ -482,6 +493,13 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
               <div className="text-xs text-muted-foreground">To {preview.data.recipient}</div>
               <div className="font-medium">{preview.data.subject}</div>
               <EmailFrame key={preview.data.html} html={preview.data.html!} title="Email preview" autoHeight />
+              {preview.data.preview_link_missing && (
+                <p className="rounded-md bg-amber-500/12 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300" role="status">
+                  The clickable preview needs a video link before this email can be sent.
+                </p>
+              )}
+              {preview.data.attachment && <AttachmentChip attachment={preview.data.attachment} />}
+              <WarningList warnings={preview.data.attachment_warnings ?? []} />
             </>
           )}
         </CardContent>

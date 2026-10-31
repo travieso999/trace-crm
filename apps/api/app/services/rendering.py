@@ -30,6 +30,27 @@ class Rendered:
     html: str
 
 
+@dataclass
+class VideoLink:
+    """A clickable video preview: a thumbnail (when there is one) and a link to where the video plays."""
+
+    url: str
+    image_src: str | None = None  # cid: in a real email, data: in an on-screen preview
+
+
+WATCH_VIDEO = "Watch the video"
+
+
+def _video_html(video: VideoLink) -> str:
+    url = html.escape(video.url, quote=True)
+    link = f'<p><a href="{url}">{WATCH_VIDEO}</a></p>'
+    if not video.image_src:
+        return link
+    img = (f'<img src="{html.escape(video.image_src, quote=True)}" alt="{WATCH_VIDEO}" width="480" '
+           'style="display:block;max-width:100%;height:auto;border:0;border-radius:6px">')
+    return f'<p><a href="{url}">{img}</a></p>\n{link}'
+
+
 def render_string(template: str, variables: dict[str, str], *, policy: str = "block",
                   fallbacks: dict[str, str] | None = None) -> str:
     fallbacks = fallbacks or {}
@@ -67,12 +88,15 @@ def text_to_html(text: str) -> str:
 
 
 def render_email(subject: str, body: str, variables: dict[str, str], *, policy: str = "block",
-                 fallbacks: dict[str, str] | None = None, footer: str | None = None) -> Rendered:
+                 fallbacks: dict[str, str] | None = None, footer: str | None = None,
+                 video: VideoLink | None = None) -> Rendered:
     subj = render_string(subject, variables, policy=policy, fallbacks=fallbacks)
     subj = " ".join(subj.split())  # no header injection via newlines
     text = render_string(body, variables, policy=policy, fallbacks=fallbacks).strip()
-    full_text = text + ("\n\n" + footer.strip() if footer else "")
+    full_text = text + (f"\n\n{WATCH_VIDEO}: {video.url}" if video else "") + ("\n\n" + footer.strip() if footer else "")
     html_body = text_to_html(text)
+    if video:  # after the message, always above the unsubscribe footer
+        html_body += "\n" + _video_html(video)
     if footer:
         html_body += '\n<p style="color:#6b7280;font-size:12px;margin-top:24px">' + _inline_html(footer.strip()) + "</p>"
     return Rendered(subject=subj, text=full_text, html=f'<div style="font-family:Arial,sans-serif;font-size:14px">{html_body}</div>')

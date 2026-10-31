@@ -14,7 +14,7 @@ from email import policy
 
 from app.core.config import get_settings
 from app.providers.base import InboundRaw, OutgoingMessage, SendResult
-from app.providers.mime import build_mime
+from app.providers.mime import build_mime, check_message_size
 
 THREAD_HEADER = "X-Sandbox-Thread-Id"
 
@@ -39,7 +39,10 @@ class SandboxProvider:
         out.mkdir(parents=True, exist_ok=True)
         provider_id = f"sbx-{uuid.uuid4().hex}"
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%f")
-        (out / f"{stamp}_{provider_id}.eml").write_bytes(mime.as_bytes())
+        raw = mime.as_bytes()
+        if msg.attachments:
+            check_message_size("sandbox", raw)
+        (out / f"{stamp}_{provider_id}.eml").write_bytes(raw)
         return SendResult(provider_message_id=provider_id, provider_thread_id=thread_id)
 
     def find_sent(self, rfc_message_id: str) -> SendResult | None:

@@ -313,6 +313,22 @@ it for anything security-relevant.
 Ordering matters: the engine **syncs replies before sending**, and reply processing locks the same enrollment
 row, so a reply that has been processed always cancels the pending follow-up.
 
+**Video on a step** (`services/video_assets.py`, `routes/video_assets.py`). A step can use one library video as a
+clickable preview (`video_preview`), a real MP4 attachment (`video_attach`), or both.
+
+- Bytes live in Postgres (`video_asset_chunks`), uploaded in 3 MiB pieces: the hosted API has no persistent disk and
+  a 4.5 MB request limit. No route returns them; they only leave as an email attachment.
+- The preview is an inline `cid:` thumbnail linking to `video_assets.link_url`, an external page, because the stored
+  file is private.
+- `providers/mime.py` holds each provider's message limit. The configurable limit (Settings → Video attachments) is
+  capped by it: 25 MB per message is about 17.7 MB per file after base64.
+- `preflight()` blocks a campaign whose video is over the limit or whose preview has no link. If that becomes true
+  mid-campaign, messages wait and retry hourly with the reason in `last_error`. An email never goes out without
+  the video it promises.
+- Gmail attachment messages use the resumable upload endpoint; everything else keeps the JSON `raw` call. SMTP also
+  honours the server's announced `SIZE`, and its IMAP Sent copy omits the file to save mailbox quota.
+- `send_due` stops starting new sends after `SEND_BUDGET_SECONDS`, so slow uploads can't hit the 300 s function limit.
+
 ### 7.2 The `REAL_SENDING` gate
 
 `providers/__init__.py: send_block_reason(account, purpose, to_email)` is checked **per message, with its

@@ -29,6 +29,8 @@ from app.models.mail import (
     SentMessage,
     SequenceStep,
     SuppressionEntry,
+    VideoAsset,
+    VideoAssetChunk,
     campaign_import_batches,
     campaign_mailboxes,
 )
@@ -63,6 +65,8 @@ __all__ = [
     "Tag",
     "User",
     "UserSession",
+    "VideoAsset",
+    "VideoAssetChunk",
     "WebsiteAudit",
     "campaign_import_batches",
     "campaign_mailboxes",

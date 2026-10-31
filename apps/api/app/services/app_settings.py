@@ -32,6 +32,8 @@ DEFAULTS: dict[str, dict] = {
     "security": {"session_ttl_hours": 12},
     "retention": {"received_body_days": 365, "audit_log_days": 730, "sandbox_outbox_days": 14},
     "backup": {"schedule": "daily 03:00 UTC", "retention_days": 14, "location": "./backups"},
+    # never above what the sending provider supports: see video_assets.max_attachment_bytes
+    "video_attachments": {"max_attachment_mb": 17, "warn_attachment_mb": 10, "library_max_mb": 200},
 }
 
 
@@ -79,6 +81,10 @@ def validate_section(key: str, value: dict) -> dict:
     if key == "ai":
         if int(value.get("daily_token_budget", 1)) < 0 or int(value.get("max_retries", 0)) not in range(0, 6):
             raise SettingsError("Invalid AI limits")
+    if key == "video_attachments":
+        for name, number in value.items():
+            if isinstance(number, bool) or not isinstance(number, int | float) or not 0 < number <= 100_000:
+                raise SettingsError(f"{name} must be a positive number of megabytes")
     return value
 
 

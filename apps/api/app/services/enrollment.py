@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Campaign, CampaignContact, Contact
-from app.services import sending
+from app.services import sending, video_assets
 from app.services.contacts import suppressed_set
 from app.services.rendering import MissingVariables, render_email, render_string
 
@@ -79,9 +79,11 @@ def preview_lead(db: Session, campaign: Campaign, contact: Contact) -> dict:
     first_subject = None
     for s in campaign.steps:
         threaded = s.position > 1 and s.reply_in_thread
+        attachment = video_assets.attachment_info(s.video_asset) if s.video_attach and s.video_asset else None
+        video = video_assets.video_link(s.video_asset, on_screen=True) if s.video_preview else None
         try:
             r = render_email("" if threaded else s.subject, s.body, vars_, policy=campaign.missing_variable_policy,
-                             fallbacks=campaign.variable_fallbacks, footer=footer)
+                             fallbacks=campaign.variable_fallbacks, footer=footer, video=video)
             subject = r.subject
             if threaded:
                 base = first_subject or "(step 1 subject)"
@@ -90,10 +92,10 @@ def preview_lead(db: Session, campaign: Campaign, contact: Contact) -> dict:
                 first_subject = subject
             steps.append({"position": s.position, "delay_days": s.delay_days, "business_days": s.business_days,
                           "threaded": threaded, "ok": True, "subject": subject, "text": r.text, "html": r.html,
-                          "missing": []})
+                          "missing": [], "attachment": attachment})
         except MissingVariables as exc:
             steps.append({"position": s.position, "delay_days": s.delay_days, "business_days": s.business_days,
                           "threaded": threaded, "ok": False, "subject": None, "text": None, "html": None,
-                          "missing": exc.names})
+                          "missing": exc.names, "attachment": attachment})
     [row] = report(db, campaign, [contact.id])
     return {"contact": row, "steps": steps, "footer_problem": footer_problem}

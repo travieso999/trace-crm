@@ -7,6 +7,7 @@
 """
 
 import logging
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -44,7 +45,7 @@ from app.providers.base import (
     SendResult,
 )
 from app.providers.mime import new_message_id
-from app.services import app_settings
+from app.services import app_settings, video_assets
 from app.services import campaigns as campaign_service
 from app.services.contacts import is_suppressed, log_activity, set_lead_status, template_variables
 from app.services.rendering import MissingVariables, Rendered, render_email, render_string
@@ -57,6 +58,9 @@ MAX_ATTEMPTS = 5
 CIRCUIT_THRESHOLD = 5
 CIRCUIT_MINUTES = 30
 RECONCILE_AFTER = timedelta(minutes=5)
+# Large attachments make a send slow. A hosted pass is killed at 300 s, which would strand the message in flight, so
+# stop starting new sends well before that (one more upload can still take up to 120 s); the rest stay queued.
+SEND_BUDGET_SECONDS = 150
 
 
 # --- rendering ------------------------------------------------------------------------------------
@@ -112,7 +116,7 @@ def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: Campaig
     rendered = render_email(
         subject_tpl if not threaded else "", step.body, contact_variables(db, contact),
         policy=campaign.missing_variable_policy, fallbacks=campaign.variable_fallbacks,
-        footer=footer_text(db, unsub),
+        footer=footer_text(db, unsub), video=video_assets.video_link(step.video_asset) if step.video_preview else None,
     )
     if threaded:
         rendered.subject = " ".join(subject_tpl.split())  # already-rendered subject of step 1
@@ -219,6 +223,7 @@ class _Reserved:
     step_position: int
     out: OutgoingMessage
     rendered: Rendered
+    attachment_asset_id: uuid.UUID | None = None  # its bytes are read after reservation, outside the row locks
 
 
 def _outgoing(mailbox: EmailAccount, contact: Contact, cc: CampaignContact, step: SequenceStep, rendered: Rendered,
@@ -286,6 +291,10 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
             return defer(mailbox.circuit_open_until, "mailbox circuit breaker open")
         if blocked := send_block_reason(mailbox, "campaign", contact.email):
             return defer(now + timedelta(hours=1), blocked)
+        if problem := video_assets.step_problem(db, step, {mailbox.provider}):
+            # never sent without the video it promises; waits (visibly) until the video or the limit is fixed
+            campaign.last_error = problem
+            return defer(now + timedelta(hours=1), problem)
 
         schedule = campaign.schedule or {}
         recipient_tz = contact.timezone if schedule.get("use_recipient_timezone") else None
@@ -317,10 +326,13 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
         mailbox.last_sent_at = now  # reserves the spacing slot
         reply_to = app_settings.get_section(db, "sending_identity").get("reply_to") or None
         out = _outgoing(mailbox, contact, cc, step, rendered, rfc_id, reply_to)
+        if step.video_preview:
+            out.inline_images = video_assets.inline_images(step.video_asset)
+        attachment_asset_id = step.video_asset_id if step.video_attach else None
         db.add(EmailEvent(type="attempted", contact_id=contact.id, campaign_id=campaign.id, email_account_id=mailbox.id,
                           data={"step": step.position}))
         db.commit()
-        return _Reserved(sm.id, cc.id, mailbox.id, step.position, out, rendered)
+        return _Reserved(sm.id, cc.id, mailbox.id, step.position, out, rendered, attachment_asset_id)
 
 
 def _provider_for(mailbox_id: uuid.UUID):
@@ -341,6 +353,15 @@ def send_scheduled(sm_id: uuid.UUID) -> str:
                 sm.status, sm.last_error = "cancelled", "prospect stopped before send"
                 db.commit()
                 return "cancelled"
+    if reserved.attachment_asset_id:
+        # outside the send's error handling: nothing has gone out yet, so this must not count as an ambiguous send
+        try:
+            with SessionLocal() as db:
+                reserved.out.attachments = [video_assets.load_attachment(db, reserved.attachment_asset_id)]
+        except Exception as exc:
+            logger.exception("could not load video attachment")
+            _temporary_failure(reserved, f"Could not load the video attachment: {exc}")
+            return "retry"
     try:
         result = _provider_for(reserved.mailbox_id).send(reserved.out)
     except AmbiguousSendError as exc:
@@ -523,7 +544,11 @@ def send_due(now: datetime | None = None) -> dict:
     with SessionLocal() as db:
         ids = dispatch_due(db, now)
     counts: dict[str, int] = {}
+    started = time.monotonic()
     for sm_id in ids:
+        if time.monotonic() - started > SEND_BUDGET_SECONDS:
+            counts["left_for_next_pass"] = len(ids) - sum(counts.values())
+            break
         outcome = send_scheduled(sm_id)
         counts[outcome] = counts.get(outcome, 0) + 1
     return counts

@@ -200,6 +200,21 @@ export default function SettingsPage() {
             </>
           )}
         </Section>
+        <Section name="video_attachments" title="Video attachments" description="Your limit can be lowered freely. It never goes above what the sending provider supports: about 17.7 MB for a file, because encoding grows it to fit the 25 MB message limit." value={s.video_attachments} readOnly={ro}>
+          {(d, set) => (
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Largest file (MB)" htmlFor="v-max">
+                <Input id="v-max" type="number" min={1} step="any" value={d.max_attachment_mb} onChange={(e) => set({ max_attachment_mb: Number(e.target.value) })} />
+              </Field>
+              <Field label="Warn above (MB)" htmlFor="v-warn">
+                <Input id="v-warn" type="number" min={1} step="any" value={d.warn_attachment_mb} onChange={(e) => set({ warn_attachment_mb: Number(e.target.value) })} />
+              </Field>
+              <Field label="Library total (MB)" htmlFor="v-lib">
+                <Input id="v-lib" type="number" min={1} step="any" value={d.library_max_mb} onChange={(e) => set({ library_max_mb: Number(e.target.value) })} />
+              </Field>
+            </div>
+          )}
+        </Section>
         <Card>
           <CardHeader>
             <CardTitle>Integrations</CardTitle>

@@ -15,7 +15,7 @@ import smtplib
 import ssl
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.providers.base import (
     AmbiguousSendError,
@@ -27,7 +27,7 @@ from app.providers.base import (
     SendResult,
     TemporaryProviderError,
 )
-from app.providers.mime import build_mime
+from app.providers.mime import build_mime, check_message_size
 
 logger = logging.getLogger("app.providers.smtp")
 
@@ -114,8 +114,12 @@ class SmtpImapProvider:
             raise ProviderUnavailable(blocked)
         mime = build_mime(msg)
         raw = mime.as_bytes()
+        if msg.attachments:
+            check_message_size("smtp", raw)
         conn = self._smtp()
         try:
+            if msg.attachments:
+                _check_server_size(conn, len(raw))
             # Envelope first: a refusal here means nothing was sent, so it is safe to retry or fail outright
             try:
                 _check(conn.mail(self.from_email))
@@ -133,7 +137,8 @@ class SmtpImapProvider:
             _check((code, resp))
         finally:
             _quit(conn)
-        self._save_sent_copy(raw)
+        # A copy per recipient would fill the mailbox quota with the same video: the Sent copy keeps only the email
+        self._save_sent_copy(build_mime(replace(msg, attachments=[])).as_bytes() if msg.attachments else raw)
         return SendResult(provider_message_id=msg.rfc_message_id, provider_thread_id=None)
 
     def find_sent(self, rfc_message_id: str) -> SendResult | None:
@@ -196,6 +201,13 @@ def _check(reply: tuple[int, bytes]) -> None:
     if 400 <= code < 500:
         raise TemporaryProviderError(text)
     raise PermanentProviderError(text)
+
+
+def _check_server_size(conn: smtplib.SMTP, size: int) -> None:
+    """Servers announce their limit in EHLO (SIZE, RFC 1870); refusing here beats a failed upload."""
+    announced = getattr(conn, "esmtp_features", {}).get("size", "")
+    if announced.isdigit() and 0 < int(announced) < size:
+        raise PermanentProviderError(f"The message is {size:,} bytes; this mail server accepts at most {int(announced):,}")
 
 
 def _quit(conn: smtplib.SMTP) -> None:

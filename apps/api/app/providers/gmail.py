@@ -20,10 +20,11 @@ from app.providers.base import (
     SendResult,
     TemporaryProviderError,
 )
-from app.providers.mime import build_mime
+from app.providers.mime import build_mime, check_message_size
 from app.services import google_oauth
 
 MAX_HISTORY_PAGES = 20
+UPLOAD_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 
 class GmailProvider:
@@ -36,12 +37,14 @@ class GmailProvider:
 
     # --- HTTP -------------------------------------------------------------------------------------
 
-    def _request(self, method: str, path: str, *, ambiguous_on_read_timeout: bool = False, **kw) -> httpx.Response:
+    def _request(self, method: str, path: str, *, ambiguous_on_read_timeout: bool = False, headers: dict | None = None,
+                 **kw) -> httpx.Response:
+        url = path if path.startswith("https://") else f"{google_oauth.GMAIL_API}{path}"
         for attempt in (0, 1):
-            headers = {"Authorization": f"Bearer {self._token(force=attempt == 1)}"}
+            auth = {"Authorization": f"Bearer {self._token(force=attempt == 1)}"}
             try:
                 with google_oauth.http_client() as c:
-                    r = c.request(method, f"{google_oauth.GMAIL_API}{path}", headers=headers, **kw)
+                    r = c.request(method, url, headers={**auth, **(headers or {})}, **kw)
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 raise TemporaryProviderError(f"Could not reach Gmail ({type(exc).__name__})") from exc
             except httpx.TimeoutException as exc:  # request was sent; Gmail may have accepted it
@@ -79,13 +82,30 @@ class GmailProvider:
     def send(self, msg: OutgoingMessage) -> SendResult:
         if blocked := self.send_block_reason(msg.to_email if msg else ""):
             raise ProviderUnavailable(blocked)
-        raw = base64.urlsafe_b64encode(build_mime(msg).as_bytes()).decode()
-        body = {"raw": raw}
-        if msg.provider_thread_id:
-            body["threadId"] = msg.provider_thread_id
-        r = self._request("POST", "/messages/send", json=body, ambiguous_on_read_timeout=True)
-        data = r.json()
+        mime = build_mime(msg).as_bytes()
+        thread = {"threadId": msg.provider_thread_id} if msg.provider_thread_id else {}
+        if msg.attachments:
+            check_message_size("gmail", mime)
+            data = self._send_resumable(mime, thread)
+        else:
+            raw = base64.urlsafe_b64encode(mime).decode()
+            data = self._request("POST", "/messages/send", json={"raw": raw, **thread},
+                                 ambiguous_on_read_timeout=True).json()
         return SendResult(provider_message_id=data["id"], provider_thread_id=data.get("threadId"))
+
+    def _send_resumable(self, mime: bytes, metadata: dict) -> dict:
+        """Upload endpoint, for messages too large to send base64-encoded inside a JSON body."""
+        start = self._request("POST", f"{google_oauth.GMAIL_UPLOAD}/messages/send", params={"uploadType": "resumable"},
+                              json=metadata, headers={"X-Upload-Content-Type": "message/rfc822",
+                                                      "X-Upload-Content-Length": str(len(mime))})
+        session = start.headers.get("location")
+        if not session:  # nothing has been uploaded yet, so trying again is safe
+            raise TemporaryProviderError("Gmail did not start the upload")
+        r = self._request("PUT", session, content=mime, headers={"Content-Type": "message/rfc822"},
+                          ambiguous_on_read_timeout=True, timeout=UPLOAD_TIMEOUT)
+        if r.status_code not in (200, 201):  # e.g. 308: Gmail kept the bytes but did not confirm a sent message
+            raise AmbiguousSendError(f"Gmail answered {r.status_code} to the upload")
+        return r.json()
 
     def find_sent(self, rfc_message_id: str) -> SendResult | None:
         r = self._request("GET", "/messages", params={"q": f"rfc822msgid:{rfc_message_id.strip('<>')}", "maxResults": 1,

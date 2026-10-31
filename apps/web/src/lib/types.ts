@@ -126,7 +126,37 @@ export type Step = {
   status?: "draft" | "active" | "paused";
   /** not sent before this moment (in addition to the delay) */
   send_at?: string | null;
+  video_asset_id?: string | null;
+  /** include the clickable preview */
+  video_preview?: boolean;
+  /** attach the actual MP4 file */
+  video_attach?: boolean;
 };
+
+export type VideoAsset = {
+  id: string;
+  filename: string;
+  size_bytes: number;
+  status: string;
+  link_url: string | null;
+  has_thumbnail: boolean;
+  warnings: string[];
+  created_at: string;
+};
+
+export type VideoLibrary = {
+  items: VideoAsset[];
+  limits: {
+    max_upload_bytes: number;
+    warn_bytes: number;
+    library_max_bytes: number;
+    library_used_bytes: number;
+    chunk_bytes: number;
+    providers: Record<string, { message_limit_bytes: number; max_attachment_bytes: number }>;
+  };
+};
+
+export type AttachmentInfo = { filename: string; size_bytes: number; content_type: string; encoded_bytes: number };
 
 export type CampaignStats = {
   leads: number;
@@ -428,6 +458,9 @@ export type PreviewResult = {
   missing: string[];
   recipient: string;
   variables_used: string[];
+  attachment?: AttachmentInfo | null;
+  attachment_warnings?: string[];
+  preview_link_missing?: boolean;
 };
 
 export type InboxItem = {
@@ -600,6 +633,7 @@ export type SettingsResponse = {
   sections: {
     company: { name: string; website: string; phone: string };
     sending_identity: { default_from_name: string; reply_to: string };
+    video_attachments: { max_attachment_mb: number; warn_attachment_mb: number; library_max_mb: number };
     compliance: { physical_address: string; footer_template: string; list_unsubscribe_header: boolean; suppress_on_unsubscribe_reply: boolean };
     defaults: { daily_limit_per_mailbox: number; campaign_daily_limit: number; min_interval_seconds: number; schedule: Schedule; timezone: string };
     ai: { enabled: boolean; model: string; daily_token_budget: number; max_retries: number; classify_replies: boolean };
@@ -653,5 +687,6 @@ export type LeadPreview = {
     text: string | null;
     html: string | null;
     missing: string[];
+    attachment: AttachmentInfo | null;
   }[];
 };

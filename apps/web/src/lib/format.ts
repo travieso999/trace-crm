@@ -21,6 +21,7 @@ export function shortDate(iso: string | null | undefined) {
 
 export const num = (n: number | null | undefined) => (n ?? 0).toLocaleString();
 export const pct = (n: number | null | undefined) => `${(n ?? 0).toFixed(1)}%`;
+export const fileSize = (bytes: number | null | undefined) => `${((bytes ?? 0) / 1_000_000).toFixed(1)} MB`;
 
 // Display names that differ from the stored value (prospect statuses are stored as lead statuses)
 const LABELS: Record<string, string> = { new_lead: "New" };

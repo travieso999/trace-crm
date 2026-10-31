@@ -84,6 +84,9 @@ class StepIn(BaseModel):
     name: str | None = Field(default=None, max_length=120)
     status: str = Field(default="active", pattern="^(draft|active|paused)$")
     send_at: datetime | None = None  # not sent before this moment (in addition to the delay)
+    video_asset_id: uuid.UUID | None = None
+    video_preview: bool = False  # include the clickable preview
+    video_attach: bool = False  # attach the actual MP4 file
 
 
 class StepOut(ORMModel):
@@ -97,6 +100,9 @@ class StepOut(ORMModel):
     name: str | None = None
     status: str = "active"
     send_at: datetime | None = None
+    video_asset_id: uuid.UUID | None = None
+    video_preview: bool = False
+    video_attach: bool = False
 
 
 class CampaignIn(BaseModel):
@@ -170,6 +176,9 @@ class PreviewIn(BaseModel):
     body: str = Field(max_length=20000)
     contact_id: uuid.UUID | None = None
     campaign_id: uuid.UUID | None = None
+    video_asset_id: uuid.UUID | None = None
+    video_preview: bool = False
+    video_attach: bool = False
 
 
 class TestSendIn(PreviewIn):

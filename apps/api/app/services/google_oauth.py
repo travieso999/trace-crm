@@ -26,6 +26,7 @@ AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"  # noqa: S105 - public endpoint, not a credential
 REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+GMAIL_UPLOAD = "https://gmail.googleapis.com/upload/gmail/v1/users/me"
 
 # Least privilege for "send campaign mail + read replies". No modify/delete, no contacts, no Drive.
 SCOPES = (

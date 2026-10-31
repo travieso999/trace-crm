@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Field, NativeSelect, Spinner } from "@/components/common";
+import { AttachmentChip } from "@/components/campaign/video-section";
 import { EmailFrame } from "@/components/email-frame";
 import { api, errorMessage } from "@/lib/api";
 import { fullName, num } from "@/lib/format";
@@ -74,6 +75,7 @@ export function LeadPreview({ campaignId, contactId }: { campaignId: string; con
             <>
               <div className="font-medium">{s.subject}</div>
               <EmailFrame key={s.html} html={s.html!} title={`Step ${s.position} preview`} autoHeight />
+              {s.attachment && <AttachmentChip attachment={s.attachment} />}
             </>
           ) : (
             <p className="rounded-md bg-amber-500/12 px-2 py-1.5 text-amber-800 dark:text-amber-300" role="status">

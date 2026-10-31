@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Table,
     Text,
@@ -28,6 +29,7 @@ CAMPAIGN_STATUSES = ("draft", "scheduled", "active", "paused", "completed", "sto
 CC_STATUSES = ("active", "paused", "replied", "completed", "unsubscribed", "bounced", "stopped", "removed", "error")
 STEP_STATUSES = ("draft", "active", "paused")
 AUDIENCE_MODES = ("fixed", "dynamic")
+VIDEO_STATUSES = ("uploading", "ready")
 SM_STATUSES = ("queued", "sending", "sent", "failed", "cancelled", "unknown")
 EVENT_TYPES = (
     "attempted",
@@ -154,8 +156,43 @@ class SequenceStep(UUIDPk, Timestamps, Base):
     # draft and paused steps hold prospects at this point of the sequence; nothing is skipped
     status: Mapped[str] = mapped_column(String(10), default="active")
     send_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # not sent before this moment
+    # one library video, used as a clickable preview, a real MP4 attachment, or both
+    video_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("video_assets.id", ondelete="RESTRICT"), index=True
+    )
+    video_preview: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    video_attach: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     campaign: Mapped[Campaign] = relationship(back_populates="steps")
+    video_asset: Mapped["VideoAsset | None"] = relationship()
+
+
+class VideoAsset(UUIDPk, Timestamps, Base):
+    """An uploaded MP4, reusable across campaign emails. The bytes live in video_asset_chunks and only ever leave the
+    application as an email attachment: no route serves them."""
+
+    __tablename__ = "video_assets"
+    __table_args__ = (CheckConstraint(f"status in {VIDEO_STATUSES}", name="status"),)
+
+    filename: Mapped[str] = mapped_column(String(255))  # the name recipients see on the attachment
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="uploading")
+    sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    # where a clickable preview leads: the stored file is private, so this is a page the video plays on
+    link_url: Mapped[str | None] = mapped_column(Text)
+    thumbnail: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
+    thumbnail_type: Mapped[str | None] = mapped_column(String(20))  # image/jpeg | image/png
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+
+
+class VideoAssetChunk(Base):
+    """Stored in pieces because a hosted request (Vercel: 4.5 MB) cannot carry a whole video."""
+
+    __tablename__ = "video_asset_chunks"
+
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("video_assets.id", ondelete="CASCADE"), primary_key=True)
+    index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
 
 
 class EmailTemplate(UUIDPk, Timestamps, Base):

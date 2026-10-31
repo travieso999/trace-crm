@@ -36,6 +36,22 @@ class ProviderUnavailable(ProviderError):
 
 
 @dataclass
+class Attachment:
+    filename: str
+    content_type: str
+    data: bytes
+
+
+@dataclass
+class InlineImage:
+    """Shown in the HTML part through ``cid:<cid>``."""
+
+    cid: str
+    content_type: str
+    data: bytes
+
+
+@dataclass
 class OutgoingMessage:
     from_email: str
     from_name: str | None
@@ -49,6 +65,8 @@ class OutgoingMessage:
     provider_thread_id: str | None = None
     reply_to: str | None = None
     list_unsubscribe_url: str | None = None
+    attachments: list[Attachment] = field(default_factory=list)
+    inline_images: list[InlineImage] = field(default_factory=list)
 
 
 @dataclass

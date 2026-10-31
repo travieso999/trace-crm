@@ -17,10 +17,11 @@ from app.models import (
     SequenceStep,
     SuppressionEntry,
     User,
+    VideoAsset,
 )
 from app.models.base import utcnow
 from app.providers import send_block_reason
-from app.services import app_settings
+from app.services import app_settings, video_assets
 from app.services.contacts import log_activity, template_variables
 from app.services.rendering import MissingVariables, render_string
 
@@ -67,6 +68,9 @@ def preflight(db: Session, campaign: Campaign) -> list[str]:
         if s.position > 1 and not s.reply_in_thread and not s.subject.strip():
             problems.append(f"Step {s.position} is sent as a new thread and needs a subject")
     connected = [m for m in campaign.mailboxes if m.status == "connected"]
+    for s in steps:
+        if problem := video_assets.step_problem(db, s, {m.provider for m in connected}):
+            problems.append(problem)
     usable = [m for m in connected if send_block_reason(m, "campaign") is None]
     if not connected:
         problems.append("Assign at least one connected email account")
@@ -341,6 +345,11 @@ def replace_steps(db: Session, campaign: Campaign, steps: list[dict]) -> None:
     removed_sent = [sid for sid in existing if sid not in keep_ids and sid in sent_step_ids]
     if removed_sent:
         raise CampaignError("Steps that already sent messages cannot be deleted (edit them instead)")
+    for i, data in enumerate(steps, start=1):
+        if data.get("video_preview") or data.get("video_attach"):
+            asset = db.get(VideoAsset, data["video_asset_id"]) if data.get("video_asset_id") else None
+            if asset is None or asset.status != "ready":
+                raise CampaignError(f"Step {i}: choose an uploaded video, or untick the video options")
     # move existing positions out of the way to satisfy the unique (campaign, position) constraint
     for s in existing.values():
         s.position = -s.position - 1000
@@ -360,6 +369,9 @@ def replace_steps(db: Session, campaign: Campaign, steps: list[dict]) -> None:
         step.name = (data.get("name") or "").strip()[:120] or None
         step.status = data.get("status") or "active"
         step.send_at = data.get("send_at")
+        step.video_preview = bool(data.get("video_preview"))
+        step.video_attach = bool(data.get("video_attach"))
+        step.video_asset_id = data.get("video_asset_id") if step.video_preview or step.video_attach else None
         new_list.append(step)
     for sid, s in existing.items():
         if sid not in keep_ids:
@@ -388,7 +400,9 @@ def duplicate(db: Session, campaign: Campaign, user: User | None) -> Campaign:
     for s in campaign.steps:
         db.add(SequenceStep(campaign_id=copy.id, position=s.position, delay_days=s.delay_days,
                             business_days=s.business_days, subject=s.subject, body=s.body,
-                            reply_in_thread=s.reply_in_thread, name=s.name, status=s.status))
+                            reply_in_thread=s.reply_in_thread, name=s.name, status=s.status,
+                            video_asset_id=s.video_asset_id, video_preview=s.video_preview,
+                            video_attach=s.video_attach))
     db.flush()
     return copy
 

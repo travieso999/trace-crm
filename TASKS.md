@@ -233,6 +233,15 @@ Legend: [x] done & verified Â· [~] implemented, awaiting external verification Â
       overflow at 1366px and 390px in light and dark; no console errors
 - [ ] Past imports can't become lists (the old audit log only kept counts, not which prospects were in each file)
 
+## Video attachments and clickable preview (2026-10-30)
+- [x] Reusable MP4 library stored in Postgres, uploaded in 3 MiB chunks (Vercel's 4.5 MB request limit, no disk); format
+      and structure validated; no route returns the bytes
+- [x] Per email: clickable preview (inline thumbnail + external link), real MIME attachment, or both. Filename, size
+      and warnings in previews; limits in Settings, capped per provider (about 17.7 MB a file for 25 MB a message)
+- [x] Gmail attachment messages use the resumable upload endpoint; sandbox .eml and SMTP include the file too
+- [x] Migration 7c1e4a9d2f60 (additive). Verified: pytest 200 passed (63 in test_video_attachments.py); ruff, tsc, eslint
+- [ ] Confirm with a real test email to Gmail, and check Outlook
+
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).
 - No Microsoft / OpenAI credentials yet. Google OAuth client is set by the user in apps/api/.env (git-ignored).

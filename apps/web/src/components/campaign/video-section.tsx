@@ -10,12 +10,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ConfirmDialog, ErrorState, Field, Spinner } from "@/components/common";
 import { ApiError, api, errorMessage } from "@/lib/api";
 import { dateTime, fileSize } from "@/lib/format";
-import type { AttachmentInfo, Step, VideoAsset, VideoLibrary, VideoThumbnail } from "@/lib/types";
+import type { AttachmentInfo, VideoAsset, VideoFields, VideoLibrary, VideoThumbnail } from "@/lib/types";
 
 const MAX_THUMBNAIL = 512 * 1024;
 const MAX_CUSTOM_THUMBNAIL = 3 * 1024 * 1024;
 const CUSTOM_THUMBNAIL_TYPES = ["image/png", "image/jpeg", "image/webp"];
-const DEFAULT_CTA = "Watch Our 60-Second Demo";
+const DEFAULT_CTA = "Get More Clients Now!";
 
 /** Filename and size, as they will show on the email. */
 export function AttachmentChip({ attachment }: { attachment: AttachmentInfo }) {
@@ -102,7 +102,7 @@ async function uploadVideo(file: File, onProgress: (done: number) => void): Prom
 
 /** The reusable library: upload once, then use the same video in any campaign email. */
 function LibraryDialog({ open, campaignId, onOpenChange, onChoose }: {
-  open: boolean; campaignId: string; onOpenChange: (o: boolean) => void; onChoose: (a: VideoAsset) => void;
+  open: boolean; campaignId?: string; onOpenChange: (o: boolean) => void; onChoose: (a: VideoAsset) => void;
 }) {
   const qc = useQueryClient();
   const input = React.useRef<HTMLInputElement>(null);
@@ -247,8 +247,8 @@ async function thumbnailProblem(file: File): Promise<string | null> {
 }
 
 /** The thumbnail of this email: a custom image, or the one generated from the video. */
-function ThumbnailSection({ step, asset, index, readOnly, onChange }: {
-  step: Step; asset: VideoAsset; index: number; readOnly: boolean; onChange: (s: Step) => void;
+function ThumbnailSection<T extends VideoFields>({ step, asset, index, readOnly, onChange }: {
+  step: T; asset: VideoAsset; index: number; readOnly: boolean; onChange: (s: T) => void;
 }) {
   const qc = useQueryClient();
   const input = React.useRef<HTMLInputElement>(null);
@@ -344,9 +344,9 @@ function ThumbnailSection({ step, asset, index, readOnly, onChange }: {
   );
 }
 
-/** The video options of one campaign email: which video, and how it is included. */
-export function VideoSection({ step, index, readOnly, campaignId, onChange }: {
-  step: Step; index: number; readOnly: boolean; campaignId: string; onChange: (s: Step) => void;
+/** The video options of one campaign email or template: which video, and how it is included. */
+export function VideoSection<T extends VideoFields>({ step, index, readOnly, campaignId, onChange }: {
+  step: T; index: number; readOnly: boolean; campaignId?: string; onChange: (s: T) => void;
 }) {
   const qc = useQueryClient();
   const [libraryOpen, setLibraryOpen] = React.useState(false);

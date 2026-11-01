@@ -176,6 +176,11 @@ class TemplateIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     subject: str = Field(default="", max_length=500)
     body: str = Field(default="", max_length=20000)
+    video_asset_id: uuid.UUID | None = None
+    video_preview: bool = False
+    video_attach: bool = False
+    video_thumbnail_id: uuid.UUID | None = None
+    video_cta_text: str | None = Field(default=None, max_length=80)
 
 
 class TemplateOut(ORMModel):
@@ -183,6 +188,11 @@ class TemplateOut(ORMModel):
     name: str
     subject: str
     body: str
+    video_asset_id: uuid.UUID | None
+    video_preview: bool
+    video_attach: bool
+    video_thumbnail_id: uuid.UUID | None
+    video_cta_text: str | None
     created_at: datetime
 
 

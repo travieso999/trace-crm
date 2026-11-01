@@ -123,7 +123,7 @@ function StepAudienceDialog({ campaign, step, position, canWrite, onOpenChange }
   );
 }
 
-function VariableButtons({ names, onInsert, disabled }: { names: string[]; onInsert: (v: string) => void; disabled?: boolean }) {
+export function VariableButtons({ names, onInsert, disabled }: { names: string[]; onInsert: (v: string) => void; disabled?: boolean }) {
   return (
     <div className="flex flex-wrap gap-1" aria-label="Insert variable">
       {names.map((n) => (
@@ -273,7 +273,11 @@ function StepCard({
                 value=""
                 onChange={(e) => {
                   const t = templates.find((x) => x.id === e.target.value);
-                  if (t) onChange({ ...step, subject: showSubject ? t.subject : step.subject, body: t.body });
+                  if (t) onChange({
+                    ...step, subject: showSubject ? t.subject : step.subject, body: t.body,
+                    // a template without a video leaves this email's video alone
+                    ...(t.video_asset_id ? { video_asset_id: t.video_asset_id, video_preview: t.video_preview, video_attach: t.video_attach, video_thumbnail_id: t.video_thumbnail_id, video_cta_text: t.video_cta_text } : {}),
+                  });
                 }}
               >
                 <option value="">Use template…</option>

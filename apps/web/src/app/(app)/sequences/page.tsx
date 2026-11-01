@@ -4,18 +4,21 @@ import * as React from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { FileText, ListOrdered, Pencil, Plus, Trash2 } from "lucide-react";
+import { FileText, ListOrdered, Pencil, Plus, Trash2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { EmailEditor } from "@/components/email-editor";
+import { EmailEditor, type EmailEditorHandle } from "@/components/email-editor";
+import { EmailFrame } from "@/components/email-frame";
+import { VariableButtons } from "@/components/campaign/sequence-editor";
+import { AttachmentChip, VideoSection, WarningList } from "@/components/campaign/video-section";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ConfirmDialog, EmptyState, ErrorState, Field, PageHeader, StatusBadge } from "@/components/common";
+import { ConfirmDialog, EmptyState, ErrorState, Field, PageHeader, Spinner, StatusBadge } from "@/components/common";
 import { useCanWrite } from "@/components/app-shell";
 import { api, errorMessage } from "@/lib/api";
 import { num, relTime } from "@/lib/format";
-import type { Campaign, Template } from "@/lib/types";
+import type { Campaign, PreviewResult, Template, VideoFields } from "@/lib/types";
 
 function SequenceSummary({ c }: { c: Campaign }) {
   const dayOf = c.steps.map((_, i) => c.steps.slice(1, i + 1).reduce((sum, s) => sum + s.delay_days, 0));
@@ -61,13 +64,54 @@ function SequenceSummary({ c }: { c: Campaign }) {
   );
 }
 
-type Draft = { id?: string; name: string; subject: string; body: string };
+type Draft = VideoFields & { id?: string; name: string; subject: string; body: string };
+
+/** The same check as a campaign email: what this template looks like with a sample prospect. */
+function TemplatePreview({ draft }: { draft: Draft }) {
+  const { subject, body, video_asset_id, video_preview, video_attach, video_thumbnail_id, video_cta_text } = draft;
+  const fields = { subject, body, video_asset_id: video_asset_id ?? null, video_preview: !!video_preview, video_attach: !!video_attach, video_thumbnail_id: video_thumbnail_id ?? null, video_cta_text: video_cta_text ?? null };
+  const preview = useQuery({
+    queryKey: ["template-preview", fields],
+    queryFn: () => api<PreviewResult>("/api/campaigns/preview", { body: fields }),
+    enabled: !!body.trim(),
+  });
+  return (
+    <div className="grid content-start gap-2 text-sm">
+      <span className="font-medium">Preview</span>
+      {!body.trim() ? (
+        <p className="text-muted-foreground">Write a body to see a preview.</p>
+      ) : preview.isPending ? (
+        <Spinner />
+      ) : preview.isError ? (
+        <p className="text-destructive">{errorMessage(preview.error)}</p>
+      ) : !preview.data.ok ? (
+        <p className="rounded-md bg-destructive/10 px-2 py-1.5 text-destructive" role="status">
+          Missing values for the sample prospect: {preview.data.missing.map((m) => `{{${m}}}`).join(", ")}.
+        </p>
+      ) : (
+        <>
+          <div className="font-medium">{preview.data.subject}</div>
+          <EmailFrame key={preview.data.html} html={preview.data.html!} title="Template preview" autoHeight />
+          {preview.data.preview_link_missing && (
+            <p className="rounded-md bg-amber-500/12 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300" role="status">
+              The clickable preview needs a video link before this email can be sent.
+            </p>
+          )}
+          {preview.data.attachment && <AttachmentChip attachment={preview.data.attachment} />}
+          <WarningList warnings={preview.data.attachment_warnings ?? []} />
+        </>
+      )}
+    </div>
+  );
+}
 
 function Templates({ canWrite }: { canWrite: boolean }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["templates"], queryFn: () => api<Template[]>("/api/templates") });
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const [deleting, setDeleting] = React.useState<Template | null>(null);
+  const bodyRef = React.useRef<EmailEditorHandle>(null);
+  const vars = useQuery({ queryKey: ["template-variables"], queryFn: () => api<{ standard: string[]; custom: string[] }>("/api/campaigns/variables") });
   const save = useMutation({
     mutationFn: (d: Draft) =>
       d.id ? api<Template>(`/api/templates/${d.id}`, { method: "PUT", body: d }) : api<Template>("/api/templates", { body: d }),
@@ -93,7 +137,7 @@ function Templates({ canWrite }: { canWrite: boolean }) {
           <h2 id="templates-h" className="text-base font-semibold">
             Templates
           </h2>
-          <p className="text-sm text-muted-foreground">Reusable copy you can drop into any step.</p>
+          <p className="text-sm text-muted-foreground">Reusable emails, with their video, thumbnail and button, that you can drop into any step.</p>
         </div>
         {canWrite && (
           <Button variant="outline" onClick={() => setDraft({ name: "", subject: "", body: "" })}>
@@ -129,25 +173,23 @@ function Templates({ canWrite }: { canWrite: boolean }) {
               </CardHeader>
               <CardContent>
                 <p className="line-clamp-3 whitespace-pre-wrap text-xs text-muted-foreground">{t.body}</p>
-                <p className="mt-2 text-[11px] text-muted-foreground">Created {relTime(t.created_at)}</p>
+                <p className="mt-2 flex items-center gap-2 text-[11px] text-muted-foreground">
+                  {t.video_asset_id && <span className="flex items-center gap-1"><Video className="size-3" aria-hidden /> Includes a video ·</span>}
+                  Created {relTime(t.created_at)}
+                </p>
               </CardContent>
             </Card>
           ))}
         </div>
       )}
       <Dialog open={!!draft} onOpenChange={(o) => !o && setDraft(null)}>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
           <DialogHeader>
             <DialogTitle>{draft?.id ? "Edit template" : "New template"}</DialogTitle>
           </DialogHeader>
           {draft && (
-            <form
-              className="grid gap-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                save.mutate(draft);
-              }}
-            >
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+            <div className="grid content-start gap-3">
               <Field label="Name" htmlFor="tpl-name">
                 <Input id="tpl-name" maxLength={200} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
               </Field>
@@ -155,17 +197,21 @@ function Templates({ canWrite }: { canWrite: boolean }) {
                 <Input id="tpl-subject" maxLength={500} value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} />
               </Field>
               <Field label="Body" htmlFor="tpl-body" hint="Use {{first_name}}, {{company_name}} and other prospect fields.">
-                <EmailEditor id="tpl-body" signatureButton value={draft.body} onChange={(body) => setDraft({ ...draft, body })} />
+                <EmailEditor id="tpl-body" editorRef={bodyRef} signatureButton videoButton={!!draft.video_asset_id && !!draft.video_preview} value={draft.body} onChange={(body) => setDraft({ ...draft, body })} />
               </Field>
+              <VideoSection step={draft} index={0} readOnly={false} onChange={setDraft} />
+              <VariableButtons names={[...(vars.data?.standard ?? []), ...(vars.data?.custom ?? [])]} onInsert={(n) => bodyRef.current?.insertText(`{{${n}}}`)} />
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setDraft(null)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={save.isPending || !draft.name.trim()}>
+                <Button type="button" disabled={save.isPending || !draft.name.trim()} onClick={() => save.mutate(draft)}>
                   Save template
                 </Button>
               </div>
-            </form>
+            </div>
+            <TemplatePreview draft={draft} />
+            </div>
           )}
         </DialogContent>
       </Dialog>

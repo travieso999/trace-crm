@@ -313,7 +313,7 @@ def test_image_and_bar_both_link_to_the_video_and_the_url_is_not_shown():
 def test_bar_is_navy_with_white_text():
     html = block()
     assert 'bgcolor="#14213d"' in html and "background-color:#14213d" in html and "color:#ffffff" in html
-    assert "Watch Our 60-Second Demo" in html
+    assert "Get More Clients Now!" in html
 
 
 def test_button_text_can_be_customised_and_is_escaped():
@@ -323,7 +323,7 @@ def test_button_text_can_be_customised_and_is_escaped():
 
 def test_plain_text_part_has_the_link():
     r = render_email("S", "Hello", {}, video=VideoLink(LINK), footer="Footer")
-    assert f"{DEFAULT_VIDEO_CTA}: {LINK}" in r.text and r.text.index(LINK) < r.text.index("Footer")
+    assert f"{DEFAULT_VIDEO_CTA} {LINK}" in r.text and r.text.index(LINK) < r.text.index("Footer")
 
 
 def test_without_an_image_the_bar_still_links():

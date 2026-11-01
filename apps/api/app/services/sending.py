@@ -117,6 +117,13 @@ def campaign_signature_args(campaign: Campaign) -> dict:
     return signature_args(mailbox, on_screen=True) if mailbox else {}
 
 
+def any_signature_args(db: Session) -> dict:
+    """For previewing a template, which belongs to no campaign."""
+    mailbox = next((m for m in db.scalars(select(EmailAccount).where(EmailAccount.status == "connected").order_by(EmailAccount.created_at))
+                    if m.has_signature), None)
+    return signature_args(mailbox, on_screen=True) if mailbox else {}
+
+
 def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: CampaignContact, contact: Contact,
                 mailbox: EmailAccount | None = None) -> Rendered:
     """Render a step for one lead. Raises MissingVariables rather than sending a broken email."""

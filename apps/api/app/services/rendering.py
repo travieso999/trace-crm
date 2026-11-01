@@ -31,7 +31,7 @@ class Rendered:
     html: str
 
 
-DEFAULT_VIDEO_CTA = "Watch Our 60-Second Demo"
+DEFAULT_VIDEO_CTA = "Get More Clients Now!"
 VIDEO_BAR_COLOR = "#14213d"
 VIDEO_BLOCK_WIDTH = 600
 # Where the video goes in the body. Both forms are removed from what recipients see, so neither can be delivered as text
@@ -81,6 +81,11 @@ class SignatureImage:
     src: str  # public https in a real email (cid: without one), data: in an on-screen preview
     alt: str
     url: str | None = None
+
+
+def _cta_line(video: VideoLink) -> str:
+    """The plain-text version of the button. Text ending in its own punctuation doesn't get a colon after it."""
+    return f"{video.cta}{' ' if video.cta[-1:] in ('!', '?', '.', ':') else ': '}{video.url}"
 
 
 def signature_image_html(image: SignatureImage) -> str:
@@ -214,7 +219,7 @@ def render_email(subject: str, body: str, variables: dict[str, str], *, policy: 
             part = _SIGNATURE_WITH_TEXT.sub(_SIGNATURE_IMAGE_SLOT, part)
         return _SIGNATURE_MARKS.sub("", part).strip()
 
-    parts = [_links_as_text(before).strip(), f"{video.cta}: {video.url}" if video else "", _links_as_text(after).strip(),
+    parts = [_links_as_text(before).strip(), _cta_line(video) if video else "", _links_as_text(after).strip(),
              footer.strip() if footer else ""]
     before, after = for_html(before), for_html(after)
     full_text = "\n\n".join(p for p in parts if p)

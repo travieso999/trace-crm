@@ -351,7 +351,9 @@ export type CampaignAnalytics = {
   definitions: Record<string, string>;
 };
 
-export type Template = { id: string; name: string; subject: string; body: string; created_at: string };
+export type VideoFields = Pick<Step, "video_asset_id" | "video_preview" | "video_attach" | "video_thumbnail_id" | "video_cta_text">;
+
+export type Template = VideoFields & { id: string; name: string; subject: string; body: string; created_at: string };
 
 export type Dashboard = {
   timezone: string;

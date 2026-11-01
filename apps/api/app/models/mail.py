@@ -238,6 +238,12 @@ class EmailTemplate(UUIDPk, Timestamps, Base):
     name: Mapped[str] = mapped_column(String(200))
     subject: Mapped[str] = mapped_column(String(500), default="")
     body: Mapped[str] = mapped_column(Text, default="")
+    # copied onto a campaign email when the template is used, like the words
+    video_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("video_assets.id", ondelete="SET NULL"))
+    video_preview: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    video_attach: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    video_thumbnail_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("email_images.id", ondelete="SET NULL"))
+    video_cta_text: Mapped[str | None] = mapped_column(String(80))
 
 
 class CampaignContact(UUIDPk, Timestamps, Base):

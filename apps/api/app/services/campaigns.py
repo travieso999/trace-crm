@@ -1,5 +1,6 @@
 """Campaign state machine, enrollment, sequence management and stop/cancel primitives."""
 
+import re
 import uuid
 from datetime import datetime
 
@@ -439,6 +440,18 @@ def duplicate(db: Session, campaign: Campaign, user: User | None) -> Campaign:
                             video_cta_text=s.video_cta_text))
     db.flush()
     return copy
+
+
+def relaunch(db: Session, campaign: Campaign, user: User | None) -> tuple[Campaign, dict]:
+    """A draft copy with the same emails and prospects, leaving out anyone who replied, unsubscribed, bounced or was
+    removed by hand. Enrolling applies the usual checks too, so the suppressed stay out."""
+    if campaign.status not in ("completed", "stopped"):
+        raise CampaignError("Only a finished campaign can be relaunched")
+    copy = duplicate(db, campaign, user)
+    copy.name = f"{re.sub(r' [(](copy|relaunch)[)]$', '', campaign.name)[:188]} (relaunch)"
+    ids = list(db.scalars(select(CampaignContact.contact_id).where(
+        CampaignContact.campaign_id == campaign.id, CampaignContact.status.not_in(("replied", "unsubscribed", "bounced", "removed")))))
+    return copy, enroll_contacts(db, copy, ids, user)
 
 
 def stats(db: Session, campaign_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:

@@ -347,7 +347,7 @@ def image_for_token(db: Session, token: str) -> EmailImage | None:
 
 def delete_asset(db: Session, asset: VideoAsset) -> None:
     """Refused while an email that can still send uses it. Finished or deleted campaigns simply lose the reference."""
-    from app.models import Campaign
+    from app.models import Campaign, EmailTemplate
 
     rows = db.execute(select(SequenceStep, Campaign).join(Campaign, Campaign.id == SequenceStep.campaign_id)
                       .where(SequenceStep.video_asset_id == asset.id)).all()
@@ -356,6 +356,8 @@ def delete_asset(db: Session, asset: VideoAsset) -> None:
         raise VideoError(f"This video is used by: {', '.join(live)}. Remove it from those emails first.", 409)
     for step, _ in rows:
         step.video_asset_id, step.video_preview, step.video_attach = None, False, False
+    for template in db.scalars(select(EmailTemplate).where(EmailTemplate.video_asset_id == asset.id)):
+        template.video_asset_id, template.video_preview, template.video_attach = None, False, False
     db.flush()
     db.delete(asset)
     db.flush()

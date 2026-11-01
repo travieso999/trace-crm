@@ -258,6 +258,9 @@ Legend: [x] done & verified Â· [~] implemented, awaiting external verification Â
       undo, signature, reload unchanged). Not yet seen in real Gmail or Outlook
 - [x] Signature image per mailbox (migration c4e92b7d1a35, additive): any shape, public signed URL like thumbnails, one
       link for the whole image. Replaces the typed signature in HTML; the typed one stays in the plain-text part
+- [x] Templates carry a video, thumbnail and button text (migration d7a1e5c30b48, additive), copied onto a step when used
+- [x] Campaign rows have Relaunch, Resume, Pause, Archive and Delete. Relaunch makes a new draft without those who replied,
+      unsubscribed or bounced, then shows the usual send confirmation; nothing sends without it
 
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).

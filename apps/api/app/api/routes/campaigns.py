@@ -269,6 +269,19 @@ def duplicate_campaign(campaign_id: uuid.UUID, request: Request, user: User = De
     return _out(db, [copy])[0]
 
 
+@router.post("/{campaign_id}/relaunch", response_model=CampaignOut, status_code=201)
+def relaunch_campaign(campaign_id: uuid.UUID, request: Request, user: User = Depends(writer), db: Session = Depends(get_db)):
+    """A new draft of a finished campaign. Nothing is sent until that draft is started."""
+    try:
+        copy, enrolled = svc.relaunch(db, _get(db, campaign_id), user)
+    except svc.CampaignError as exc:
+        raise _campaign_error(exc) from exc
+    audit(db, user, "campaign.relaunched", "campaign", copy.id, request, source=str(campaign_id), **enrolled)
+    db.commit()
+    db.refresh(copy)
+    return _out(db, [copy])[0]
+
+
 @router.get("/{campaign_id}/preflight")
 def preflight(campaign_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
     c = _get(db, campaign_id)
@@ -613,7 +626,7 @@ def preview(body: PreviewIn, _: User = Depends(reader), db: Session = Depends(ge
         r = render_email(body.subject, body.body, vars_,
                          policy=campaign.missing_variable_policy if campaign else "block",
                          fallbacks=campaign.variable_fallbacks if campaign else None, footer=footer, video=link,
-                         **(sending.campaign_signature_args(campaign) if campaign else {}))
+                         **(sending.campaign_signature_args(campaign) if campaign else sending.any_signature_args(db)))
     except MissingVariables as exc:
         return {"ok": False, "missing": exc.names, "recipient": who,
                 "variables_used": sorted(variables_in(body.subject) | variables_in(body.body))}
@@ -689,6 +702,21 @@ def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), 
 
 # --- templates ------------------------------------------------------------------------------------
 
+def _apply_template(db: Session, t: EmailTemplate, body: TemplateIn) -> None:
+    has_video = body.video_preview or body.video_attach
+    if has_video:
+        asset = db.get(VideoAsset, body.video_asset_id) if body.video_asset_id else None
+        if asset is None or asset.status != "ready":
+            raise HTTPException(422, "Choose an uploaded video, or untick the video options")
+        if body.video_thumbnail_id and db.get(EmailImage, body.video_thumbnail_id) is None:
+            raise HTTPException(422, "That thumbnail no longer exists; upload it again")
+    t.name, t.subject, t.body = body.name.strip(), body.subject, body.body
+    t.video_preview, t.video_attach = body.video_preview, body.video_attach
+    t.video_asset_id = body.video_asset_id if has_video else None
+    t.video_thumbnail_id = body.video_thumbnail_id if has_video else None
+    t.video_cta_text = " ".join((body.video_cta_text or "").split())[:80] or None
+
+
 @templates_router.get("", response_model=list[TemplateOut])
 def list_templates(_: User = Depends(reader), db: Session = Depends(get_db)):
     return list(db.scalars(select(EmailTemplate).order_by(func.lower(EmailTemplate.name))))
@@ -696,7 +724,8 @@ def list_templates(_: User = Depends(reader), db: Session = Depends(get_db)):
 
 @templates_router.post("", response_model=TemplateOut, status_code=201)
 def create_template(body: TemplateIn, user: User = Depends(writer), db: Session = Depends(get_db)):
-    t = EmailTemplate(name=body.name.strip(), subject=body.subject, body=body.body)
+    t = EmailTemplate()
+    _apply_template(db, t, body)
     db.add(t)
     db.commit()
     return t
@@ -707,7 +736,7 @@ def update_template(template_id: uuid.UUID, body: TemplateIn, user: User = Depen
     t = db.get(EmailTemplate, template_id)
     if t is None:
         raise HTTPException(404, "Template not found")
-    t.name, t.subject, t.body = body.name.strip(), body.subject, body.body
+    _apply_template(db, t, body)
     db.commit()
     return t
 

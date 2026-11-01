@@ -14,9 +14,10 @@ from app.providers.base import OutgoingMessage, ProviderError, ProviderUnavailab
 from app.providers.mime import new_message_id
 from app.schemas.mail import ReplyIn
 from app.services import inbox as inbox_service
+from app.services import video_assets
 from app.services.contacts import log_activity
 from app.services.inbound import latest_text
-from app.services.rendering import text_to_html
+from app.services.rendering import signature_image_html, text_to_html
 
 router = APIRouter(prefix="/api/inbox", tags=["inbox"])
 
@@ -189,7 +190,10 @@ def reply(conv_id: uuid.UUID, body: ReplyIn, request: Request, user: User = Depe
     if not subject.lower().startswith("re:"):
         subject = f"Re: {subject}"
     text = body.body.strip()
-    if mailbox.signature_html:
+    signature_image = video_assets.signature_image(mailbox)
+    if signature_image:
+        html = text_to_html(text) + f"<br>{signature_image_html(signature_image)}"
+    elif mailbox.signature_html:
         html = text_to_html(text) + f"<br>{mailbox.signature_html}"
     else:
         html = text_to_html(text)
@@ -198,6 +202,7 @@ def reply(conv_id: uuid.UUID, body: ReplyIn, request: Request, user: User = Depe
                           subject=subject, text=text, html=html, rfc_message_id=rfc_id,
                           in_reply_to=last_in.rfc_message_id, references=refs[-10:],
                           provider_thread_id=c.provider_thread_id)
+    out.inline_images = video_assets.signature_inline_images(mailbox)
     try:
         result = get_provider(mailbox, "reply").send(out)
     except ProviderUnavailable as exc:

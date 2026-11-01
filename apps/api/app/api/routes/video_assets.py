@@ -81,7 +81,7 @@ def _error(exc: svc.VideoError) -> HTTPException:
     return HTTPException(exc.status, str(exc))
 
 
-async def _read_body(request: Request, limit: int) -> bytes:
+async def read_body(request: Request, limit: int) -> bytes:
     data = bytearray()
     async for part in request.stream():
         data += part
@@ -114,7 +114,7 @@ def start_upload(body: UploadIn, request: Request, user: User = Depends(writer),
 async def upload_chunk(asset_id: uuid.UUID, index: int, request: Request, _: User = Depends(writer),
                        db: Session = Depends(get_db)):
     asset = _get(db, asset_id)
-    data = await _read_body(request, svc.CHUNK_BYTES)
+    data = await read_body(request, svc.CHUNK_BYTES)
     try:
         svc.store_chunk(db, asset, index, data)
     except svc.VideoError as exc:
@@ -138,7 +138,7 @@ def complete_upload(asset_id: uuid.UUID, request: Request, user: User = Depends(
 async def put_thumbnail(asset_id: uuid.UUID, request: Request, user: User = Depends(writer), db: Session = Depends(get_db)):
     """The thumbnail captured from the video in the browser when it is uploaded."""
     asset = _get(db, asset_id)
-    data = await _read_body(request, svc.MAX_THUMBNAIL_BYTES)
+    data = await read_body(request, svc.MAX_THUMBNAIL_BYTES)
     try:
         svc.set_thumbnail(db, asset, data, user.id)
     except svc.VideoError as exc:
@@ -151,7 +151,7 @@ async def put_thumbnail(asset_id: uuid.UUID, request: Request, user: User = Depe
 async def upload_custom_thumbnail(request: Request, filename: str | None = None, play_button: bool = True,
                                   user: User = Depends(writer), db: Session = Depends(get_db)):
     """A custom thumbnail for one campaign email. The step points at the result when the sequence is saved."""
-    data = await _read_body(request, svc.MAX_IMAGE_BYTES)
+    data = await read_body(request, svc.MAX_IMAGE_BYTES)
     try:
         image = svc.store_image(db, data, filename, user.id, widescreen=True, play_button=play_button)
     except svc.VideoError as exc:

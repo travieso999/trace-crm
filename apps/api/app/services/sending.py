@@ -48,7 +48,7 @@ from app.providers.mime import new_message_id
 from app.services import app_settings, video_assets
 from app.services import campaigns as campaign_service
 from app.services.contacts import is_suppressed, log_activity, set_lead_status, template_variables
-from app.services.rendering import MissingVariables, Rendered, render_email, render_string, signature_to_text
+from app.services.rendering import MissingVariables, Rendered, render_email, render_string, signature_to_text, uses_signature
 from app.services.scheduling import add_delay, next_joint_window, next_window_start, start_of_local_day
 
 logger = logging.getLogger("app.sending")
@@ -105,9 +105,16 @@ def contact_variables(db: Session, contact: Contact) -> dict[str, str]:
     return vars_
 
 
-def campaign_signature(campaign: Campaign) -> str | None:
+def signature_args(mailbox: EmailAccount, *, on_screen: bool = False) -> dict:
+    """The mailbox's signature, for render_email."""
+    return {"signature": signature_to_text(mailbox.signature_html),
+            "signature_image": video_assets.signature_image(mailbox, on_screen=on_screen)}
+
+
+def campaign_signature_args(campaign: Campaign) -> dict:
     """For previews, before a prospect has a mailbox: the first signature among the campaign's mailboxes."""
-    return next((signature_to_text(m.signature_html) for m in campaign.mailboxes if m.signature_html), None)
+    mailbox = next((m for m in campaign.mailboxes if m.has_signature), None)
+    return signature_args(mailbox, on_screen=True) if mailbox else {}
 
 
 def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: CampaignContact, contact: Contact,
@@ -123,7 +130,7 @@ def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: Campaig
         subject_tpl if not threaded else "", step.body, contact_variables(db, contact),
         policy=campaign.missing_variable_policy, fallbacks=campaign.variable_fallbacks,
         footer=footer_text(db, unsub), video=video_assets.step_link(step),
-        signature=signature_to_text(mailbox.signature_html) if mailbox else None,
+        **(signature_args(mailbox) if mailbox else {}),
     )
     if threaded:
         rendered.subject = " ".join(subject_tpl.split())  # already-rendered subject of step 1
@@ -336,6 +343,8 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
         reply_to = app_settings.get_section(db, "sending_identity").get("reply_to") or None
         out = _outgoing(mailbox, contact, cc, step, rendered, rfc_id, reply_to)
         out.inline_images = video_assets.step_inline_images(step)
+        if uses_signature(step.body):
+            out.inline_images += video_assets.signature_inline_images(mailbox)
         attachment_asset_id = step.video_asset_id if step.video_attach else None
         db.add(EmailEvent(type="attempted", contact_id=contact.id, campaign_id=campaign.id, email_account_id=mailbox.id,
                           data={"step": step.position}))

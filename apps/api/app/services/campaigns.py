@@ -75,7 +75,7 @@ def preflight(db: Session, campaign: Campaign) -> list[str]:
     for s in steps:
         if problem := video_assets.step_problem(db, s, {m.provider for m in connected}):
             problems.append(problem)
-    unsigned = [m.email for m in connected if not m.signature_html]
+    unsigned = [m.email for m in connected if not m.has_signature]
     if unsigned and (signed_steps := [s.position for s in steps if uses_signature(s.body)]):
         problems.append(f"Step {signed_steps[0]} uses a signature, but {', '.join(unsigned)} has none: "
                         "add it in the mailbox's settings")

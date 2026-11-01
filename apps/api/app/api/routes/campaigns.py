@@ -51,7 +51,6 @@ from app.services.rendering import (
     STANDARD_VARIABLES,
     MissingVariables,
     render_email,
-    signature_to_text,
     uses_signature,
     variables_in,
 )
@@ -614,12 +613,12 @@ def preview(body: PreviewIn, _: User = Depends(reader), db: Session = Depends(ge
         r = render_email(body.subject, body.body, vars_,
                          policy=campaign.missing_variable_policy if campaign else "block",
                          fallbacks=campaign.variable_fallbacks if campaign else None, footer=footer, video=link,
-                         signature=sending.campaign_signature(campaign) if campaign else None)
+                         **(sending.campaign_signature_args(campaign) if campaign else {}))
     except MissingVariables as exc:
         return {"ok": False, "missing": exc.names, "recipient": who,
                 "variables_used": sorted(variables_in(body.subject) | variables_in(body.body))}
     attaching = asset is not None and body.video_attach
-    unsigned = [m.email for m in campaign.mailboxes if not m.signature_html] if campaign else []
+    unsigned = [m.email for m in campaign.mailboxes if not m.has_signature] if campaign else []
     return {"ok": True, "signature_missing": unsigned if uses_signature(body.body) else [],
             "subject": r.subject, "html": r.html, "text": r.text, "recipient": who, "missing": [],
             "variables_used": sorted(variables_in(body.subject) | variables_in(body.body)),
@@ -653,7 +652,7 @@ def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), 
                          policy=campaign.missing_variable_policy if campaign else "block",
                          fallbacks=campaign.variable_fallbacks if campaign else None,
                          footer=sending.footer_text(db, f"{get_settings().public_url.rstrip('/')}/u/test"),
-                         video=link, signature=signature_to_text(mailbox.signature_html))
+                         video=link, **sending.signature_args(mailbox))
     except MissingVariables as exc:
         raise HTTPException(422, str(exc)) from exc
     rfc_id = new_message_id(mailbox.email)
@@ -661,6 +660,8 @@ def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), 
                           subject=f"[TEST] {r.subject}", text=r.text, html=r.html, rfc_message_id=rfc_id)
     if link is not None:
         out.inline_images = video_assets.inline_images(asset, image)
+    if uses_signature(body.body):
+        out.inline_images = out.inline_images + video_assets.signature_inline_images(mailbox)
     if asset is not None and body.video_attach:
         try:
             out.attachments = [video_assets.load_attachment(db, asset.id)]

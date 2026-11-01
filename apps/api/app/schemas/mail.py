@@ -52,6 +52,9 @@ class EmailAccountOut(ORMModel):
     min_interval_seconds: int
     schedule: dict
     signature_html: str | None
+    signature_link: str | None = None
+    signature_image_url: str | None = None
+    signature_image_name: str | None = None
     last_synced_at: datetime | None
     last_sent_at: datetime | None
     consecutive_failures: int
@@ -79,6 +82,7 @@ class EmailAccountUpdate(BaseModel):
     schedule: ScheduleIn | None = None
     signature_html: str | None = Field(default=None, max_length=5000)
     signature_text: str | None = Field(default=None, max_length=5000)  # what the editor saves: lines and [label](url)
+    signature_link: str | None = Field(default=None, max_length=2000)  # where clicking the signature image goes
 
 
 class StepIn(BaseModel):

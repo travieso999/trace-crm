@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import admin, audit, reader
+from app.api.routes.video_assets import read_body
 from app.core.config import get_settings
 from app.core.crypto import CryptoError, encrypt
 from app.core.db import get_db
@@ -25,7 +26,7 @@ from app.providers.mime import new_message_id
 from app.providers.sandbox import SandboxProvider
 from app.schemas.common import Message
 from app.schemas.mail import EmailAccountOut, EmailAccountUpdate
-from app.services import app_settings, google_oauth, inbound, sending
+from app.services import app_settings, google_oauth, inbound, sending, video_assets
 from app.services.campaigns import release_window_waits
 from app.services.normalize import InvalidEmail, normalize_email
 from app.services.rendering import signature_to_html
@@ -84,6 +85,8 @@ def _out(db: Session, accounts: list[EmailAccount]) -> list[EmailAccountOut]:
         o.sent_today = sending.sent_today(db, a, now)
         o.sent_total = totals.get(a.id, 0)
         o.campaigns = links.get(a.id, [])
+        if a.signature_image:
+            o.signature_image_url, o.signature_image_name = video_assets.image_path(a.signature_image), a.signature_image.filename
         out.append(o)
     return out
 
@@ -320,10 +323,39 @@ def update_account(account_id: uuid.UUID, body: EmailAccountUpdate, request: Req
         if "{{" in signature or "}}" in signature:
             raise HTTPException(422, "A signature can’t contain {{variables}}: it is also used for manual replies")
         a.signature_html = signature_to_html(signature) if signature else None
+    if "signature_link" in data:
+        try:
+            a.signature_link = video_assets.clean_link(data["signature_link"], "signature image link")
+        except video_assets.VideoError as exc:
+            raise HTTPException(422, str(exc)) from exc
     if data.get("schedule"):
         a.schedule = {k: v for k, v in data["schedule"].items() if k != "use_recipient_timezone"}
         release_window_waits(db, mailbox_id=a.id)
     audit(db, user, "mailbox.updated", "email_account", a.id, request, fields=sorted(data))
+    db.commit()
+    return _out(db, [a])[0]
+
+
+@router.post("/{account_id}/signature-image", response_model=EmailAccountOut)
+async def upload_signature_image(account_id: uuid.UUID, request: Request, filename: str | None = None, user: User = Depends(admin),
+                                 db: Session = Depends(get_db)):
+    """Takes effect at once. The old image stays stored, because emails already delivered keep loading it."""
+    a = _get(db, account_id)
+    data = await read_body(request, video_assets.MAX_IMAGE_BYTES)
+    try:
+        a.signature_image = video_assets.store_image(db, data, filename, user.id, widescreen=False, play_button=False)
+    except video_assets.VideoError as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    audit(db, user, "mailbox.signature_image_uploaded", "email_account", a.id, request, filename=a.signature_image.filename)
+    db.commit()
+    return _out(db, [a])[0]
+
+
+@router.delete("/{account_id}/signature-image", response_model=EmailAccountOut)
+def remove_signature_image(account_id: uuid.UUID, request: Request, user: User = Depends(admin), db: Session = Depends(get_db)):
+    a = _get(db, account_id)
+    a.signature_image = None
+    audit(db, user, "mailbox.signature_image_removed", "email_account", a.id, request)
     db.commit()
     return _out(db, [a])[0]
 

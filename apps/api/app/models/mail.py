@@ -73,6 +73,9 @@ class EmailAccount(UUIDPk, Timestamps, Base):
     min_interval_seconds: Mapped[int] = mapped_column(Integer, default=120)
     schedule: Mapped[dict] = mapped_column(JSONB, default=lambda: dict(DEFAULT_SCHEDULE))
     signature_html: Mapped[str | None] = mapped_column(Text)
+    # a designed signature: in HTML it takes the place of the typed one, which stays as the plain-text version
+    signature_image_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("email_images.id", ondelete="SET NULL"))
+    signature_link: Mapped[str | None] = mapped_column(Text)
     sync_cursor: Mapped[str | None] = mapped_column(Text)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -80,6 +83,12 @@ class EmailAccount(UUIDPk, Timestamps, Base):
     circuit_open_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    signature_image: Mapped["EmailImage | None"] = relationship()
+
+    @property
+    def has_signature(self) -> bool:
+        return bool(self.signature_html or self.signature_image_id)
 
 
 # imported lists a campaign drew its audience from ("Associated campaigns" on the list)

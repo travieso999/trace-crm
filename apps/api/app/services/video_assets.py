@@ -25,7 +25,7 @@ from app.models.base import utcnow
 from app.providers import mime
 from app.providers.base import Attachment, InlineImage
 from app.services import app_settings
-from app.services.rendering import DEFAULT_VIDEO_CTA, VideoLink
+from app.services.rendering import DEFAULT_VIDEO_CTA, SignatureImage, VideoLink, signature_alt, signature_to_text
 
 VIDEO_TYPE = "video/mp4"
 # under Vercel's 4.5 MB request limit
@@ -117,13 +117,13 @@ def clean_filename(name: str | None) -> str:
     return f"{stem[:200]}.mp4"
 
 
-def clean_link(url: str | None) -> str | None:
+def clean_link(url: str | None, label: str = "video link") -> str | None:
     url = (url or "").strip()
     if not url:
         return None
     parts = urlsplit(url)
     if parts.scheme not in ("http", "https") or not parts.netloc or len(url) > 2000 or re.search(r"[\s\"'<>]", url):
-        raise VideoError("The video link must be a full http(s) address")
+        raise VideoError(f"The {label} must be a full http(s) address")
     return url
 
 
@@ -403,19 +403,19 @@ def clean_cta(text: str | None) -> str:
     return " ".join((text or "").split())[:80] or DEFAULT_VIDEO_CTA
 
 
+def _image_src(image: EmailImage, on_screen: bool) -> str:
+    if on_screen:
+        return f"data:{image.content_type};base64,{base64.b64encode(image.data).decode()}"
+    return public_image_url(image) or f"cid:{thumbnail_cid(image)}"
+
+
 def video_link(asset: VideoAsset | None, image: EmailImage | None, cta: str | None, *, on_screen: bool = False) -> VideoLink | None:
     """The clickable preview. A real email loads the image from its public URL, so it adds nothing to the message and
     isn't listed as an attachment; previews in the app embed the same bytes. Outside a public address the image travels
     inside the email instead."""
     if asset is None or not asset.link_url:
         return None
-    src = None
-    if image is not None:
-        if on_screen:
-            src = f"data:{image.content_type};base64,{base64.b64encode(image.data).decode()}"
-        else:
-            src = public_image_url(image) or f"cid:{thumbnail_cid(image)}"
-    return VideoLink(asset.link_url, src, clean_cta(cta))
+    return VideoLink(asset.link_url, _image_src(image, on_screen) if image else None, clean_cta(cta))
 
 
 def inline_images(asset: VideoAsset | None, image: EmailImage | None) -> list[InlineImage]:
@@ -435,6 +435,21 @@ def step_inline_images(step: SequenceStep) -> list[InlineImage]:
     if not step.video_preview:
         return []
     return inline_images(step.video_asset, chosen_image(step.video_asset, step.video_thumbnail))
+
+
+def signature_image(mailbox: EmailAccount, *, on_screen: bool = False) -> SignatureImage | None:
+    image = mailbox.signature_image
+    if image is None:
+        return None
+    alt = signature_alt(signature_to_text(mailbox.signature_html), mailbox.display_name)
+    return SignatureImage(_image_src(image, on_screen), alt, mailbox.signature_link)
+
+
+def signature_inline_images(mailbox: EmailAccount) -> list[InlineImage]:
+    image = mailbox.signature_image
+    if image is None or public_image_url(image):
+        return []
+    return [InlineImage(thumbnail_cid(image), image.content_type, image.data)]
 
 
 def attachment_info(asset: VideoAsset) -> dict:

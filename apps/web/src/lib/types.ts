@@ -98,6 +98,9 @@ export type EmailAccount = {
   schedule: Schedule;
   signature_html: string | null;
   signature_text: string;
+  signature_link: string | null;
+  signature_image_url: string | null;
+  signature_image_name: string | null;
   last_synced_at: string | null;
   last_sent_at: string | null;
   consecutive_failures: number;

@@ -256,6 +256,8 @@ Legend: [x] done & verified Â· [~] implemented, awaiting external verification Â
       is blocked while one of its connected mailboxes has none
 - [x] Verified: full pytest suite, ruff, tsc, eslint, `next build`; editor driven in Edge (link, Ctrl+K, edit, remove, paste,
       undo, signature, reload unchanged). Not yet seen in real Gmail or Outlook
+- [x] Signature image per mailbox (migration c4e92b7d1a35, additive): any shape, public signed URL like thumbnails, one
+      link for the whole image. Replaces the typed signature in HTML; the typed one stays in the plain-text part
 
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).

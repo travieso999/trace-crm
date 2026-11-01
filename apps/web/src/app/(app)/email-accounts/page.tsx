@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { FlaskConical, Mail, MoreHorizontal, Pause, Play, Plus, RefreshCw, Send, Settings2, Unplug } from "lucide-react";
+import { FlaskConical, ImagePlus, Mail, MoreHorizontal, Pause, Play, Plus, RefreshCw, Send, Settings2, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -328,9 +328,58 @@ function ConnectDialog({ open, onOpenChange, onSmtp }: { open: boolean; onOpenCh
   );
 }
 
+/** A designed signature. Saved as soon as it's chosen, like any upload; the link is saved with the other settings. */
+function SignatureImageField({ account, link, onLinkChange }: { account: EmailAccount; link: string; onLinkChange: (v: string) => void }) {
+  const qc = useQueryClient();
+  const input = React.useRef<HTMLInputElement>(null);
+  const [saved, setSaved] = React.useState(account);
+  const change = useMutation({
+    mutationFn: (file: File | null) => api<EmailAccount>(`/api/email-accounts/${account.id}/signature-image`, file
+      ? { method: "POST", raw: file, query: { filename: file.name } }
+      : { method: "DELETE" }),
+    onSuccess: (a) => {
+      setSaved(a);
+      qc.invalidateQueries({ queryKey: ["email-accounts"] });
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  return (
+    <div className="grid gap-2">
+      <span className="text-sm font-medium">Signature image</span>
+      {saved.signature_image_url && (
+        // eslint-disable-next-line @next/next/no-img-element -- a small signed image from this API
+        <img src={saved.signature_image_url} alt={saved.signature_image_name ?? "Signature image"} className="w-full max-w-[480px] rounded-md border" />
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" className="sr-only" aria-label="Choose a signature image"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) change.mutate(file);
+          }} />
+        <Button type="button" variant="outline" size="sm" disabled={change.isPending} onClick={() => input.current?.click()}>
+          <ImagePlus /> {saved.signature_image_url ? "Replace image" : "Upload image"}
+        </Button>
+        {saved.signature_image_url && (
+          <Button type="button" variant="ghost" size="sm" disabled={change.isPending} onClick={() => change.mutate(null)}>Remove</Button>
+        )}
+        <span className="text-xs text-muted-foreground">PNG, JPG or WebP, up to 3 MB. Shown 480 pixels wide.</span>
+      </div>
+      {saved.signature_image_url && (
+        <Field label="Clicking the image opens" htmlFor="mb-sig-link">
+          <Input id="mb-sig-link" value={link} placeholder="https://trace-studio.tech" onChange={(e) => onLinkChange(e.target.value)} />
+        </Field>
+      )}
+    </div>
+  );
+}
+
+/** A bare "trace-studio.tech" is what people type; the API wants a full address. */
+const fullLink = (v: string) => (!v.trim() ? null : /^https?:\/\//i.test(v.trim()) ? v.trim() : `https://${v.trim()}`);
+
 function SettingsDialog({ account, onOpenChange }: { account: EmailAccount | null; onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
-  const [draft, setDraft] = React.useState<{ display_name: string; daily_limit: number; min_interval_seconds: number; schedule: Schedule; signature_text: string } | null>(null);
+  const [draft, setDraft] = React.useState<{ display_name: string; daily_limit: number; min_interval_seconds: number; schedule: Schedule; signature_text: string; signature_link: string } | null>(null);
   const [forId, setForId] = React.useState<string | null>(null);
   if (account && forId !== account.id) {
     setForId(account.id);
@@ -340,13 +389,15 @@ function SettingsDialog({ account, onOpenChange }: { account: EmailAccount | nul
       min_interval_seconds: account.min_interval_seconds,
       schedule: account.schedule,
       signature_text: account.signature_text,
+      signature_link: account.signature_link ?? "",
     });
   }
   const save = useMutation({
     mutationFn: () => {
       const { signature_text, ...rest } = draft!;
+      const body = { ...rest, signature_link: fullLink(rest.signature_link) };
       // left out when untouched, so an older signature isn't rewritten just by saving other settings
-      return api<EmailAccount>(`/api/email-accounts/${account!.id}`, { method: "PATCH", body: signature_text === account!.signature_text ? rest : draft });
+      return api<EmailAccount>(`/api/email-accounts/${account!.id}`, { method: "PATCH", body: signature_text === account!.signature_text ? body : { ...body, signature_text } });
     },
     onSuccess: () => {
       toast.success("Mailbox settings saved");
@@ -357,7 +408,7 @@ function SettingsDialog({ account, onOpenChange }: { account: EmailAccount | nul
   });
   return (
     <Dialog open={!!account} onOpenChange={(o) => { if (!o) setForId(null); onOpenChange(o); }}>
-      <DialogContent className="sm:max-w-xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Mailbox settings</DialogTitle>
           <DialogDescription>{account?.email}</DialogDescription>
@@ -384,7 +435,8 @@ function SettingsDialog({ account, onOpenChange }: { account: EmailAccount | nul
               </Field>
             </div>
             <ScheduleEditor value={draft.schedule} onChange={(schedule) => setDraft({ ...draft, schedule })} />
-            <Field label="Signature" htmlFor="mb-sig" hint="Goes on manual replies, and on campaign emails where you press Signature in the sequence.">
+            {account && <SignatureImageField key={account.id} account={account} link={draft.signature_link} onLinkChange={(signature_link) => setDraft({ ...draft, signature_link })} />}
+            <Field label="Signature text" htmlFor="mb-sig" hint="Goes on manual replies, and on campaign emails where you press Signature in the sequence. With an image, the email shows the image, and this text is the version for mail apps that only show plain text.">
               <EmailEditor id="mb-sig" value={draft.signature_text} onChange={(signature_text) => setDraft({ ...draft, signature_text })} />
             </Field>
             <div className="flex justify-end gap-2">

@@ -84,7 +84,7 @@ def preview_lead(db: Session, campaign: Campaign, contact: Contact) -> dict:
         try:
             r = render_email("" if threaded else s.subject, s.body, vars_, policy=campaign.missing_variable_policy,
                              fallbacks=campaign.variable_fallbacks, footer=footer, video=video,
-                             signature=sending.campaign_signature(campaign))
+                             **sending.campaign_signature_args(campaign))
             subject = r.subject
             if threaded:
                 base = first_subject or "(step 1 subject)"

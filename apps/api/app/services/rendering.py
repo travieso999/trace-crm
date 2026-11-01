@@ -36,6 +36,18 @@ VIDEO_BLOCK_WIDTH = 600
 # Where the video goes in the body. Both forms are removed from what recipients see, so neither can be delivered as text
 VIDEO_MARKER = re.compile(r"\*{0,2}\[\s*INSERT VIDEO THUMBNAIL HERE\s*\]\*{0,2}|\{\{\s*video\s*\}\}", re.IGNORECASE)
 _VIDEO_SLOT = ""  # private-use character: survives templating and can't be typed by accident
+# a whole line that closes the message; deliberately exact, so "Thanks for your time" in a sentence doesn't count
+_SIGN_OFF = re.compile(r"(best|best regards|best wishes|regards|kind regards|warm regards|warmly|thanks|thanks so much|"
+                       r"many thanks|thank you|cheers|sincerely|yours truly|talk soon)[,.!]?", re.IGNORECASE)
+
+
+def _split_before_sign_off(text: str) -> tuple[str, str]:
+    """With no marker, the video belongs after the message but above "Best, Name", not under the signature."""
+    paragraphs = re.split(r"\n{2,}", text)
+    for i in range(len(paragraphs) - 1, 0, -1):
+        if _SIGN_OFF.fullmatch(paragraphs[i].strip().split("\n")[0].strip()):
+            return "\n\n".join(paragraphs[:i]), "\n\n".join(paragraphs[i:])
+    return text, ""
 
 
 @dataclass
@@ -65,8 +77,8 @@ def _video_html(video: VideoLink) -> str:
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
             f'style="width:100%;max-width:{VIDEO_BLOCK_WIDTH}px;border-collapse:collapse;margin:16px 0">{image}'
             f'<tr><td align="center" bgcolor="{VIDEO_BAR_COLOR}" style="background-color:{VIDEO_BAR_COLOR};padding:0">'
-            f'<a href="{url}" target="_blank" style="display:block;padding:14px 16px;color:#ffffff;font-family:Arial,'
-            f'sans-serif;font-size:16px;font-weight:bold;line-height:20px;text-align:center;text-decoration:none">{cta}</a>'
+            f'<a href="{url}" target="_blank" style="display:block;padding:9px 12px;color:#ffffff;font-family:Arial,'
+            f'sans-serif;font-size:14px;font-weight:bold;line-height:18px;text-align:center;text-decoration:none">{cta}</a>'
             '</td></tr></table><!--[if mso]></td></tr></table><![endif]-->')
 
 
@@ -115,8 +127,10 @@ def render_email(subject: str, body: str, variables: dict[str, str], *, policy: 
     subj = " ".join(subj.split())  # no header injection via newlines
     marked = VIDEO_MARKER.sub(_VIDEO_SLOT, body)
     text = render_string(marked, variables, policy=policy, fallbacks=fallbacks)
-    # the video goes at the first marker, or after the message; further markers just disappear, so it can't appear twice
-    before, _, after = text.partition(_VIDEO_SLOT)
+    # the video goes at the first marker, or above the sign-off; further markers just disappear, so it can't appear twice
+    before, marker, after = text.partition(_VIDEO_SLOT)
+    if video and not marker:
+        before, after = _split_before_sign_off(before)
     before, after = before.strip(), after.replace(_VIDEO_SLOT, "").strip()
     parts = [before, f"{video.cta}: {video.url}" if video else "", after, footer.strip() if footer else ""]
     full_text = "\n\n".join(p for p in parts if p)

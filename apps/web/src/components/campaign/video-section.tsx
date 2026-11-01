@@ -254,6 +254,7 @@ function ThumbnailSection({ step, asset, index, readOnly, onChange }: {
   const input = React.useRef<HTMLInputElement>(null);
   const [selected, setSelected] = React.useState<{ url: string; name: string } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [playButton, setPlayButton] = React.useState(true);
   const customId = step.video_thumbnail_id;
   const custom = useQuery({
     queryKey: ["video-thumbnail", customId],
@@ -265,7 +266,7 @@ function ThumbnailSection({ step, asset, index, readOnly, onChange }: {
     setSelected(next);
   }
   const upload = useMutation({
-    mutationFn: (file: File) => api<VideoThumbnail>("/api/video-assets/thumbnails", { method: "POST", raw: file, query: { filename: file.name } }),
+    mutationFn: (file: File) => api<VideoThumbnail>("/api/video-assets/thumbnails", { method: "POST", raw: file, query: { filename: file.name, play_button: playButton } }),
     onSuccess: (t) => {
       qc.setQueryData(["video-thumbnail", t.id], t);
       showSelected(null);
@@ -325,7 +326,13 @@ function ThumbnailSection({ step, asset, index, readOnly, onChange }: {
               )}
             </div>
           )}
-          <p className="text-xs text-muted-foreground">PNG, JPG or WebP, 16:9 such as 1280x720, up to 3 MB. A white play button is added to the center automatically.</p>
+          {!readOnly && (
+            <label className="flex items-center gap-2 text-xs">
+              <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={playButton} onChange={(e) => setPlayButton(e.target.checked)} />
+              Add a white play button (untick if your design has its own). Applies to the next image you upload.
+            </label>
+          )}
+          <p className="text-xs text-muted-foreground">PNG, JPG or WebP, 16:9 such as 1280x720, up to 3 MB.</p>
           {error && <p className="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive" role="alert">{error}</p>}
         </div>
       </div>
@@ -420,7 +427,7 @@ export function VideoSection({ step, index, readOnly, campaignId, onChange }: {
           </Field>
           <ThumbnailSection step={step} asset={asset} index={index} readOnly={readOnly} onChange={onChange} />
           <p className="text-xs text-muted-foreground">
-            The video block goes after your message. To place it elsewhere, put <code>{"{{video}}"}</code> on its own line in the body.
+            The video block goes after your message, above your sign-off (“Best,” “Thanks,”). To place it elsewhere, put <code>{"{{video}}"}</code> on its own line in the body.
           </p>
         </div>
       )}

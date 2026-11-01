@@ -78,12 +78,22 @@ def test_transparent_png_is_flattened_on_white(client, db):
 
 def test_play_button_is_baked_into_the_center_of_the_image(client, db):
     img = stored(db, put_image(client, picture()).json()["id"]).convert("RGB")
-    r, g, b = img.getpixel((640, 360 - 75))  # the white disc, away from the triangle
+    r, g, b = img.getpixel((640, 360 - 45))  # the white disc, away from the triangle
     assert min(r, g, b) > 225
+    r, g, b = img.getpixel((640, 360 - 85))  # small enough to leave the design around it visible
+    assert r > 170 and g < 60 and b < 60
     r, g, b = img.getpixel((640 + 20, 360))  # the navy triangle
     assert max(r, g, b) < 90
     r, g, b = img.getpixel((30, 30))  # the picture itself is untouched
     assert r > 170 and g < 60 and b < 60
+
+
+def test_play_button_can_be_left_out_for_a_design_that_has_its_own(client, db):
+    r = client.c.post("/api/video-assets/thumbnails", params={"filename": "d.png", "play_button": "false"}, content=picture(),
+                      headers={"X-CSRF-Token": client.csrf})
+    assert r.status_code == 201, r.text
+    red, green, blue = stored(db, r.json()["id"]).convert("RGB").getpixel((640, 360))
+    assert red > 170 and green < 60 and blue < 60
 
 
 def test_metadata_in_the_upload_is_not_kept(client, db):
@@ -346,6 +356,38 @@ def test_several_markers_never_duplicate_the_block():
     body = "A\n\n**[INSERT VIDEO THUMBNAIL HERE]**\n\nB\n\n{{video}}\n\nC"
     r = render_email("S", body, {}, video=VideoLink(LINK))
     assert r.html.count(BAR) == 1 and r.text.count(LINK) == 1 and "INSERT" not in r.text
+
+
+SIGNED = "Hey Travis,\n\nI attached a short video.\n\nBest,\nTravis\nTrace Studio\ntrace-studio.tech"
+
+
+def test_without_a_marker_the_block_goes_above_the_sign_off_not_under_the_signature():
+    r = render_email("S", SIGNED, {}, video=VideoLink(LINK), footer="Footer")
+    assert r.html.index("short video") < r.html.index(BAR) < r.html.index("Best,") < r.html.index("trace-studio.tech") < r.html.index("Footer")
+    assert r.html.count(BAR) == 1
+    assert r.text.index("short video") < r.text.index(LINK) < r.text.index("Best,") < r.text.index("Footer")
+
+
+@pytest.mark.parametrize("closing", ["Thanks,", "thanks", "Kind regards,", "Cheers!", "Sincerely,"])
+def test_common_sign_offs_are_recognised(closing):
+    r = render_email("S", f"Message\n\n{closing}\nTravis", {}, video=VideoLink(LINK))
+    assert r.html.index(BAR) < r.html.index(closing)
+
+
+@pytest.mark.parametrize("body", ["Thanks for your time today.\n\nMore text", "Best of all, it is quick.\n\nMore text", "Best,\nTravis"])
+def test_ordinary_sentences_and_a_lone_opening_do_not_count_as_a_sign_off(body):
+    r = render_email("S", body, {}, video=VideoLink(LINK))
+    assert r.html.rindex("</p>") < r.html.index(BAR)  # after the whole message
+
+
+def test_a_marker_wins_over_the_sign_off():
+    r = render_email("S", "One\n\n{{video}}\n\nTwo\n\nBest,\nTravis", {}, video=VideoLink(LINK))
+    assert r.html.index(BAR) < r.html.index("Two") < r.html.index("Best,") and r.html.count(BAR) == 1
+
+
+def test_sign_off_text_is_untouched_without_a_preview():
+    r = render_email("S", SIGNED, {})
+    assert r.text == SIGNED and "<table" not in r.html
 
 
 def test_placeholder_disappears_when_there_is_no_preview():

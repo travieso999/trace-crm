@@ -238,7 +238,7 @@ def _draw_play_button(img):
 
     scale = 4  # drawn large and shrunk, for smooth edges
     w, h = img.size
-    size = int(min(w, h) * 0.26) * scale
+    size = int(min(w, h) * 0.16) * scale
     margin = size // 4
     canvas = size + margin * 2
     shadow = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
@@ -255,10 +255,10 @@ def _draw_play_button(img):
     return out.convert("RGB")
 
 
-def process_image(data: bytes, *, widescreen: bool) -> tuple[bytes, int, int]:
+def process_image(data: bytes, *, widescreen: bool, play_button: bool = True) -> tuple[bytes, int, int]:
     """Check an upload really is an allowed image and make the version emails use: a JPEG (Outlook can't show WebP) at
-    most 1280 wide with the play button baked in. Only the result is stored, so metadata and anything else hidden in
-    the original never reach a recipient."""
+    most 1280 wide, with the play button baked in unless the design has its own. Only the result is stored, so metadata
+    and anything else hidden in the original never reach a recipient."""
     from PIL import Image, ImageOps, UnidentifiedImageError
 
     try:
@@ -284,7 +284,9 @@ def process_image(data: bytes, *, widescreen: bool) -> tuple[bytes, int, int]:
         flat = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
         flat.alpha_composite(rgba)
         img = flat
-    img = _draw_play_button(img.convert("RGB"))
+    img = img.convert("RGB")
+    if play_button:
+        img = _draw_play_button(img)
     for quality in (85, 75, 65, 50, 35):
         out = io.BytesIO()
         img.save(out, "JPEG", quality=quality, optimize=True)
@@ -298,12 +300,13 @@ def clean_image_name(name: str | None) -> str:
     return re.sub(r'[\x00-\x1f\x7f"<>:|?*]', "", base).strip()[:200] or "thumbnail"
 
 
-def store_image(db: Session, data: bytes, filename: str | None, user_id: uuid.UUID | None, *, widescreen: bool) -> EmailImage:
+def store_image(db: Session, data: bytes, filename: str | None, user_id: uuid.UUID | None, *, widescreen: bool,
+                play_button: bool = True) -> EmailImage:
     if not data:
         raise VideoError("This file is empty")
     if len(data) > MAX_IMAGE_BYTES:
         raise VideoError(f"This image is {_size(len(data))}; the limit is {_size(MAX_IMAGE_BYTES)}", 413)
-    processed, width, height = process_image(data, widescreen=widescreen)
+    processed, width, height = process_image(data, widescreen=widescreen, play_button=play_button)
     image = EmailImage(filename=clean_image_name(filename), content_type="image/jpeg", width=width, height=height,
                        size_bytes=len(processed), data=processed, created_by=user_id)
     db.add(image)

@@ -244,7 +244,8 @@ Legend: [x] done & verified Â· [~] implemented, awaiting external verification Â
 - [x] Custom thumbnail per email (`email_images`, migration a3d81f6c0b27, additive): PNG/JPG/WebP 16:9, processed to a
       JPEG with the play button baked in; public signed URL /u/thumb/<token>.jpg on a public https site, inside the email
       otherwise. Navy button bar with editable text; `{{video}}` or the old placeholder sets the position
-- [x] Verified: pytest 259 passed (53 in test_custom_thumbnail.py); ruff, tsc, eslint, `next build`; migration
+- [x] Without a marker the block goes above the sign-off; smaller bar and play button; play button optional per upload
+- [x] Verified: pytest 271 passed (65 in test_custom_thumbnail.py); ruff, tsc, eslint, `next build`; migration
       up/down/up with an existing thumbnail, `alembic check`; block rendered in Edge at 760 px and 375 px
 
 ## Blockers / limitations

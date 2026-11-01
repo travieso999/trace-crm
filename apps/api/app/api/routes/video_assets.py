@@ -148,12 +148,12 @@ async def put_thumbnail(asset_id: uuid.UUID, request: Request, user: User = Depe
 
 
 @router.post("/thumbnails", response_model=ThumbnailOut, status_code=201)
-async def upload_custom_thumbnail(request: Request, filename: str | None = None, user: User = Depends(writer),
-                                  db: Session = Depends(get_db)):
+async def upload_custom_thumbnail(request: Request, filename: str | None = None, play_button: bool = True,
+                                  user: User = Depends(writer), db: Session = Depends(get_db)):
     """A custom thumbnail for one campaign email. The step points at the result when the sequence is saved."""
     data = await _read_body(request, svc.MAX_IMAGE_BYTES)
     try:
-        image = svc.store_image(db, data, filename, user.id, widescreen=True)
+        image = svc.store_image(db, data, filename, user.id, widescreen=True, play_button=play_button)
     except svc.VideoError as exc:
         raise _error(exc) from exc
     audit(db, user, "video.thumbnail_uploaded", "email_image", image.id, request, filename=image.filename)

@@ -105,6 +105,7 @@ def create_app() -> FastAPI:
     for module in (auth, dashboard, contacts, companies, settings_routes, email_accounts, campaigns, inbox, crm,
                    opportunities, notifications, suppressions, analytics, unsubscribe, cron, imports, video_assets):
         app.include_router(module.router)
+    app.include_router(video_assets.public_router)
     app.include_router(campaigns.templates_router)
     app.include_router(opportunities.notes_router)
 

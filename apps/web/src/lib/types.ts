@@ -131,6 +131,19 @@ export type Step = {
   video_preview?: boolean;
   /** attach the actual MP4 file */
   video_attach?: boolean;
+  /** this email's own thumbnail; otherwise the one generated from the video */
+  video_thumbnail_id?: string | null;
+  /** text of the bar under the thumbnail */
+  video_cta_text?: string | null;
+};
+
+export type VideoThumbnail = {
+  id: string;
+  filename: string;
+  width: number | null;
+  height: number | null;
+  size_bytes: number;
+  url: string;
 };
 
 export type VideoAsset = {
@@ -140,6 +153,7 @@ export type VideoAsset = {
   status: string;
   link_url: string | null;
   has_thumbnail: boolean;
+  thumbnail_url: string | null;
   warnings: string[];
   created_at: string;
 };

@@ -318,8 +318,12 @@ clickable preview (`video_preview`), a real MP4 attachment (`video_attach`), or 
 
 - Bytes live in Postgres (`video_asset_chunks`), uploaded in 3 MiB pieces: the hosted API has no persistent disk and
   a 4.5 MB request limit. No route returns them; they only leave as an email attachment.
-- The preview is an inline `cid:` thumbnail linking to `video_assets.link_url`, an external page, because the stored
-  file is private.
+- The preview is a thumbnail and a button bar linking to `video_assets.link_url`, an external page, because the stored
+  file is private. `process_image` turns any upload into a JPEG with the play button baked in (email clients drop
+  anything layered over an image). A step's custom thumbnail wins over the video's automatic one.
+- `email_images` rows are immutable and never deleted on replace, since delivered emails keep loading them from their
+  signed public URL (`/u/thumb/<token>.jpg`). With no public https `PUBLIC_URL`, the image travels inside the email
+  (`cid:`) so a localhost link can never go out.
 - `providers/mime.py` holds each provider's message limit. The configurable limit (Settings → Video attachments) is
   capped by it: 25 MB per message is about 17.7 MB per file after base64.
 - `preflight()` blocks a campaign whose video is over the limit or whose preview has no link. If that becomes true

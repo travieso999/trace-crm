@@ -80,7 +80,7 @@ def preview_lead(db: Session, campaign: Campaign, contact: Contact) -> dict:
     for s in campaign.steps:
         threaded = s.position > 1 and s.reply_in_thread
         attachment = video_assets.attachment_info(s.video_asset) if s.video_attach and s.video_asset else None
-        video = video_assets.video_link(s.video_asset, on_screen=True) if s.video_preview else None
+        video = video_assets.step_link(s, on_screen=True)
         try:
             r = render_email("" if threaded else s.subject, s.body, vars_, policy=campaign.missing_variable_policy,
                              fallbacks=campaign.variable_fallbacks, footer=footer, video=video)

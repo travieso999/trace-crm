@@ -87,6 +87,8 @@ class StepIn(BaseModel):
     video_asset_id: uuid.UUID | None = None
     video_preview: bool = False  # include the clickable preview
     video_attach: bool = False  # attach the actual MP4 file
+    video_thumbnail_id: uuid.UUID | None = None  # custom thumbnail; otherwise the one generated from the video
+    video_cta_text: str | None = Field(default=None, max_length=80)  # the bar under the thumbnail
 
 
 class StepOut(ORMModel):
@@ -103,6 +105,8 @@ class StepOut(ORMModel):
     video_asset_id: uuid.UUID | None = None
     video_preview: bool = False
     video_attach: bool = False
+    video_thumbnail_id: uuid.UUID | None = None
+    video_cta_text: str | None = None
 
 
 class CampaignIn(BaseModel):
@@ -179,6 +183,8 @@ class PreviewIn(BaseModel):
     video_asset_id: uuid.UUID | None = None
     video_preview: bool = False
     video_attach: bool = False
+    video_thumbnail_id: uuid.UUID | None = None
+    video_cta_text: str | None = Field(default=None, max_length=80)
 
 
 class TestSendIn(PreviewIn):

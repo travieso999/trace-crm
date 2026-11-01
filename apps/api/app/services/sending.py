@@ -116,7 +116,7 @@ def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: Campaig
     rendered = render_email(
         subject_tpl if not threaded else "", step.body, contact_variables(db, contact),
         policy=campaign.missing_variable_policy, fallbacks=campaign.variable_fallbacks,
-        footer=footer_text(db, unsub), video=video_assets.video_link(step.video_asset) if step.video_preview else None,
+        footer=footer_text(db, unsub), video=video_assets.step_link(step),
     )
     if threaded:
         rendered.subject = " ".join(subject_tpl.split())  # already-rendered subject of step 1
@@ -328,8 +328,7 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
         mailbox.last_sent_at = now  # reserves the spacing slot
         reply_to = app_settings.get_section(db, "sending_identity").get("reply_to") or None
         out = _outgoing(mailbox, contact, cc, step, rendered, rfc_id, reply_to)
-        if step.video_preview:
-            out.inline_images = video_assets.inline_images(step.video_asset)
+        out.inline_images = video_assets.step_inline_images(step)
         attachment_asset_id = step.video_asset_id if step.video_attach else None
         db.add(EmailEvent(type="attempted", contact_id=contact.id, campaign_id=campaign.id, email_account_id=mailbox.id,
                           data={"step": step.position}))

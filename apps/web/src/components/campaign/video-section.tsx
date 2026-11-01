@@ -3,16 +3,19 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ImagePlus, Paperclip, Trash2, Upload, Video } from "lucide-react";
+import { ImagePlus, Paperclip, RefreshCw, Trash2, Upload, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ConfirmDialog, ErrorState, Field, Spinner } from "@/components/common";
 import { ApiError, api, errorMessage } from "@/lib/api";
 import { dateTime, fileSize } from "@/lib/format";
-import type { AttachmentInfo, Step, VideoAsset, VideoLibrary } from "@/lib/types";
+import type { AttachmentInfo, Step, VideoAsset, VideoLibrary, VideoThumbnail } from "@/lib/types";
 
 const MAX_THUMBNAIL = 512 * 1024;
+const MAX_CUSTOM_THUMBNAIL = 3 * 1024 * 1024;
+const CUSTOM_THUMBNAIL_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const DEFAULT_CTA = "Watch Our 60-Second Demo";
 
 /** Filename and size, as they will show on the email. */
 export function AttachmentChip({ attachment }: { attachment: AttachmentInfo }) {
@@ -36,7 +39,7 @@ export function WarningList({ warnings }: { warnings: string[] }) {
   );
 }
 
-/** A frame of the video with a play button, as a JPEG. Null when this browser can't decode the file. */
+/** A frame of the video as a JPEG (the server adds the play button). Null when this browser can't decode the file. */
 async function captureThumbnail(file: File): Promise<Blob | null> {
   const url = URL.createObjectURL(file);
   try {
@@ -62,18 +65,6 @@ async function captureThumbnail(file: File): Promise<Blob | null> {
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const r = Math.min(canvas.width, canvas.height) * 0.12;
-    const [cx, cy] = [canvas.width / 2, canvas.height / 2];
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.moveTo(cx - r * 0.35, cy - r * 0.5);
-    ctx.lineTo(cx + r * 0.55, cy);
-    ctx.lineTo(cx - r * 0.35, cy + r * 0.5);
-    ctx.fill();
     for (const quality of [0.8, 0.6, 0.4]) {
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
       if (blob && blob.size <= MAX_THUMBNAIL) return blob;
@@ -228,13 +219,130 @@ function LibraryDialog({ open, campaignId, onOpenChange, onChoose }: {
   );
 }
 
+function imageSize(file: File): Promise<{ width: number; height: number } | null> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    img.src = url;
+  });
+}
+
+/** Why this file can't be used, before spending an upload on it. The server checks everything again. */
+async function thumbnailProblem(file: File): Promise<string | null> {
+  if (!CUSTOM_THUMBNAIL_TYPES.includes(file.type) && !/\.(png|jpe?g|webp)$/i.test(file.name)) return "Use a PNG, JPG or WebP image.";
+  if (file.size > MAX_CUSTOM_THUMBNAIL) return `This image is ${fileSize(file.size)}; the limit is ${fileSize(MAX_CUSTOM_THUMBNAIL)}.`;
+  const size = await imageSize(file);
+  if (!size) return "This file can't be read as an image.";
+  if (Math.abs(size.width / size.height - 16 / 9) > 0.02) return `This image is ${size.width}x${size.height}. Thumbnails must be 16:9, such as 1280x720.`;
+  if (size.width < 640) return `This image is ${size.width}x${size.height}, too small to look sharp. Use 1280x720.`;
+  return null;
+}
+
+/** The thumbnail of this email: a custom image, or the one generated from the video. */
+function ThumbnailSection({ step, asset, index, readOnly, onChange }: {
+  step: Step; asset: VideoAsset; index: number; readOnly: boolean; onChange: (s: Step) => void;
+}) {
+  const qc = useQueryClient();
+  const input = React.useRef<HTMLInputElement>(null);
+  const [selected, setSelected] = React.useState<{ url: string; name: string } | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const customId = step.video_thumbnail_id;
+  const custom = useQuery({
+    queryKey: ["video-thumbnail", customId],
+    queryFn: () => api<VideoThumbnail>(`/api/video-assets/thumbnails/${customId}`),
+    enabled: !!customId,
+  });
+  function showSelected(next: { url: string; name: string } | null) {
+    if (selected) URL.revokeObjectURL(selected.url);
+    setSelected(next);
+  }
+  const upload = useMutation({
+    mutationFn: (file: File) => api<VideoThumbnail>("/api/video-assets/thumbnails", { method: "POST", raw: file, query: { filename: file.name } }),
+    onSuccess: (t) => {
+      qc.setQueryData(["video-thumbnail", t.id], t);
+      showSelected(null);
+      setError(null);
+      onChange({ ...step, video_thumbnail_id: t.id });
+    },
+    onError: (e) => {
+      showSelected(null);
+      setError(errorMessage(e));
+    },
+  });
+  async function pick(file: File) {
+    setError(null);
+    const problem = await thumbnailProblem(file);
+    if (problem) return setError(problem);
+    showSelected({ url: URL.createObjectURL(file), name: file.name });
+    upload.mutate(file);
+  }
+  const src = selected?.url ?? (customId ? custom.data?.url : asset.thumbnail_url);
+  const uploadStatus = upload.isPending
+    ? "Uploading…"
+    : customId
+      ? custom.isError
+        ? "This thumbnail couldn’t be loaded."
+        : custom.data
+          ? `${custom.data.width}x${custom.data.height} · ${fileSize(custom.data.size_bytes)} · ready. Save the sequence to keep it.`
+          : "Loading…"
+      : asset.has_thumbnail
+        ? "Generated from the video."
+        : "No thumbnail yet, so the email shows only the button.";
+  return (
+    <div className="grid gap-2 rounded-md border p-2">
+      <p className="text-xs font-medium">Thumbnail</p>
+      <div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
+        <div className="aspect-video overflow-hidden rounded-md border bg-muted">
+          {/* eslint-disable-next-line @next/next/no-img-element -- a same-origin image from the API, or a local file being uploaded */}
+          {src ? <img src={src} alt="Selected thumbnail" className="size-full object-cover" /> : <span className="grid size-full place-items-center text-xs text-muted-foreground">None</span>}
+        </div>
+        <div className="grid content-start gap-1.5">
+          <p className="truncate text-sm font-medium">{selected?.name ?? (customId ? custom.data?.filename : "Automatic thumbnail")}</p>
+          <p className="text-xs text-muted-foreground" role="status">{uploadStatus}</p>
+          {!readOnly && (
+            <div className="flex flex-wrap gap-1.5">
+              <input ref={input} type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp" className="sr-only" aria-label="Choose a thumbnail image"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (file) void pick(file);
+                }} />
+              <Button type="button" variant="outline" size="sm" disabled={upload.isPending} onClick={() => input.current?.click()}>
+                {customId ? <RefreshCw /> : <ImagePlus />} {customId ? "Replace Thumbnail" : "Upload Custom Thumbnail"}
+              </Button>
+              {customId && (
+                <Button type="button" variant="ghost" size="sm" disabled={upload.isPending} onClick={() => onChange({ ...step, video_thumbnail_id: null })}>
+                  <Trash2 /> Remove Custom Thumbnail
+                </Button>
+              )}
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">PNG, JPG or WebP, 16:9 such as 1280x720, up to 3 MB. A white play button is added to the center automatically.</p>
+          {error && <p className="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive" role="alert">{error}</p>}
+        </div>
+      </div>
+      <Field label="Button text" htmlFor={`video-cta-${index}`} hint="The navy bar under the thumbnail. Make sure it matches the video, such as its real length.">
+        <Input id={`video-cta-${index}`} maxLength={80} disabled={readOnly} value={step.video_cta_text ?? ""} placeholder={DEFAULT_CTA}
+          onChange={(e) => onChange({ ...step, video_cta_text: e.target.value || null })} />
+      </Field>
+    </div>
+  );
+}
+
 /** The video options of one campaign email: which video, and how it is included. */
 export function VideoSection({ step, index, readOnly, campaignId, onChange }: {
   step: Step; index: number; readOnly: boolean; campaignId: string; onChange: (s: Step) => void;
 }) {
   const qc = useQueryClient();
   const [libraryOpen, setLibraryOpen] = React.useState(false);
-  const thumbInput = React.useRef<HTMLInputElement>(null);
   const q = useQuery({
     queryKey: ["video-assets", campaignId],
     queryFn: () => api<VideoLibrary>("/api/video-assets", { query: { campaign_id: campaignId } }),
@@ -248,14 +356,6 @@ export function VideoSection({ step, index, readOnly, campaignId, onChange }: {
     mutationFn: () => api<VideoAsset>(`/api/video-assets/${asset!.id}`, { method: "PATCH", body: { link_url: linkValue.trim() || null } }),
     onSuccess: () => {
       setLink(null);
-      refresh();
-    },
-    onError: (e) => toast.error(errorMessage(e)),
-  });
-  const saveThumb = useMutation({
-    mutationFn: (file: File) => api<VideoAsset>(`/api/video-assets/${asset!.id}/thumbnail`, { method: "PUT", raw: file }),
-    onSuccess: () => {
-      toast.success("Thumbnail updated");
       refresh();
     },
     onError: (e) => toast.error(errorMessage(e)),
@@ -293,7 +393,7 @@ export function VideoSection({ step, index, readOnly, campaignId, onChange }: {
             <Button type="button" variant="ghost" size="sm" onClick={() => setLibraryOpen(true)}>
               Change
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => onChange({ ...step, video_asset_id: null, video_preview: false, video_attach: false })}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onChange({ ...step, video_asset_id: null, video_preview: false, video_attach: false, video_thumbnail_id: null })}>
               Remove
             </Button>
           </span>
@@ -314,28 +414,14 @@ export function VideoSection({ step, index, readOnly, campaignId, onChange }: {
       <p className="text-xs text-muted-foreground">Tick both to include both. With neither ticked, saving removes the video from this email.</p>
       {step.video_preview && asset && (
         <div className="grid gap-2">
-          <Field label="Video link" htmlFor={`video-link-${index}`} hint="Where the preview leads, such as a YouTube, Vimeo or Loom page. The stored file is private, so it can't be the link. Shared by every email using this video.">
+          <Field label="Video link" htmlFor={`video-link-${index}`} hint="What clicking the thumbnail opens. It must be a page where the video plays, such as an unlisted YouTube, Vimeo or Loom page: the attached file is private, so it can't be the link. Shared by every email using this video.">
             <Input id={`video-link-${index}`} type="url" disabled={readOnly} value={linkValue} placeholder="https://…"
               onChange={(e) => setLink(e.target.value)} onBlur={() => link !== null && saveLink.mutate()} />
           </Field>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {asset.has_thumbnail ? "Thumbnail set: see the preview." : "No thumbnail yet, so the email shows a text link."}
-            </span>
-            {!readOnly && (
-              <>
-                <input ref={thumbInput} type="file" accept="image/jpeg,image/png" className="sr-only" aria-label="Choose a thumbnail image"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (file) saveThumb.mutate(file);
-                  }} />
-                <Button type="button" variant="ghost" size="sm" disabled={saveThumb.isPending} onClick={() => thumbInput.current?.click()}>
-                  <ImagePlus /> {asset.has_thumbnail ? "Replace thumbnail" : "Add thumbnail"}
-                </Button>
-              </>
-            )}
-          </div>
+          <ThumbnailSection step={step} asset={asset} index={index} readOnly={readOnly} onChange={onChange} />
+          <p className="text-xs text-muted-foreground">
+            The video block goes after your message. To place it elsewhere, put <code>{"{{video}}"}</code> on its own line in the body.
+          </p>
         </div>
       )}
       {step.video_attach && asset && (

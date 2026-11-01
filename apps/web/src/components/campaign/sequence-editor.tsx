@@ -312,7 +312,7 @@ function TestSendDialog({ step, campaignId, onOpenChange }: { step: Step | null;
   const send = useMutation({
     mutationFn: () =>
       api<{ message: string }>("/api/campaigns/test-send", {
-        body: { subject: step!.subject, body: step!.body, campaign_id: campaignId, to_email: to || me.data?.user.email, email_account_id: box || connected[0]?.id, video_asset_id: step!.video_asset_id ?? null, video_preview: !!step!.video_preview, video_attach: !!step!.video_attach },
+        body: { subject: step!.subject, body: step!.body, campaign_id: campaignId, to_email: to || me.data?.user.email, email_account_id: box || connected[0]?.id, video_asset_id: step!.video_asset_id ?? null, video_preview: !!step!.video_preview, video_attach: !!step!.video_attach, video_thumbnail_id: step!.video_thumbnail_id ?? null, video_cta_text: step!.video_cta_text ?? null },
       }),
     onSuccess: (r) => {
       toast.success(r.message);
@@ -392,10 +392,10 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
 
   const previewStep = steps[Math.min(previewIdx, steps.length - 1)];
   const preview = useQuery({
-    queryKey: ["preview", campaign.id, previewStep?.subject, previewStep?.body, previewIdx, previewStep?.video_asset_id, previewStep?.video_preview, previewStep?.video_attach],
+    queryKey: ["preview", campaign.id, previewStep?.subject, previewStep?.body, previewIdx, previewStep?.video_asset_id, previewStep?.video_preview, previewStep?.video_attach, previewStep?.video_thumbnail_id, previewStep?.video_cta_text],
     queryFn: () =>
       api<PreviewResult>("/api/campaigns/preview", {
-        body: { subject: previewIdx > 0 && previewStep.reply_in_thread ? "Re: " + (steps[0]?.subject ?? "") : previewStep.subject, body: previewStep.body, campaign_id: campaign.id, video_asset_id: previewStep.video_asset_id ?? null, video_preview: !!previewStep.video_preview, video_attach: !!previewStep.video_attach },
+        body: { subject: previewIdx > 0 && previewStep.reply_in_thread ? "Re: " + (steps[0]?.subject ?? "") : previewStep.subject, body: previewStep.body, campaign_id: campaign.id, video_asset_id: previewStep.video_asset_id ?? null, video_preview: !!previewStep.video_preview, video_attach: !!previewStep.video_attach, video_thumbnail_id: previewStep.video_thumbnail_id ?? null, video_cta_text: previewStep.video_cta_text ?? null },
       }),
     enabled: !!previewStep && !!previewStep.body.trim(),
   });
@@ -405,9 +405,10 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
       api<Campaign>(`/api/campaigns/${campaign.id}/steps`, {
         method: "PUT",
         body: {
-          steps: steps.map(({ id, delay_days, business_days, subject, body, reply_in_thread, name, status, send_at, video_asset_id, video_preview, video_attach }) => ({
+          steps: steps.map(({ id, delay_days, business_days, subject, body, reply_in_thread, name, status, send_at, video_asset_id, video_preview, video_attach, video_thumbnail_id, video_cta_text }) => ({
             id, delay_days, business_days, subject, body, reply_in_thread, name: name?.trim() || null, status: status ?? "active", send_at: send_at ?? null,
             video_asset_id: video_asset_id ?? null, video_preview: !!video_preview, video_attach: !!video_attach,
+            video_thumbnail_id: video_thumbnail_id ?? null, video_cta_text: video_cta_text ?? null,
           })),
         },
       }),

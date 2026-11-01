@@ -162,9 +162,31 @@ class SequenceStep(UUIDPk, Timestamps, Base):
     )
     video_preview: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     video_attach: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # this email's own thumbnail; without one it uses the thumbnail generated from the video
+    video_thumbnail_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("email_images.id", ondelete="SET NULL")
+    )
+    video_cta_text: Mapped[str | None] = mapped_column(String(80))
 
     campaign: Mapped[Campaign] = relationship(back_populates="steps")
     video_asset: Mapped["VideoAsset | None"] = relationship()
+    video_thumbnail: Mapped["EmailImage | None"] = relationship()
+
+
+class EmailImage(UUIDPk, Base):
+    """A processed thumbnail, ready for email. Never changed or deleted when replaced: emails already delivered keep
+    loading it from its public URL, so replacing one means pointing at a new row."""
+
+    __tablename__ = "email_images"
+
+    filename: Mapped[str] = mapped_column(String(255))  # as uploaded; only ever displayed
+    content_type: Mapped[str] = mapped_column(String(20))
+    width: Mapped[int | None] = mapped_column(Integer)
+    height: Mapped[int | None] = mapped_column(Integer)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    data: Mapped[bytes] = mapped_column(LargeBinary, deferred=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class VideoAsset(UUIDPk, Timestamps, Base):
@@ -180,9 +202,16 @@ class VideoAsset(UUIDPk, Timestamps, Base):
     sha256: Mapped[str | None] = mapped_column(String(64), index=True)
     # where a clickable preview leads: the stored file is private, so this is a page the video plays on
     link_url: Mapped[str | None] = mapped_column(Text)
+    # superseded by thumbnail_image_id; kept so nothing is lost (the migration copied them to email_images)
     thumbnail: Mapped[bytes | None] = mapped_column(LargeBinary, deferred=True)
-    thumbnail_type: Mapped[str | None] = mapped_column(String(20))  # image/jpeg | image/png
+    thumbnail_type: Mapped[str | None] = mapped_column(String(20))
+    # generated from the video when it was uploaded
+    thumbnail_image_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("email_images.id", ondelete="SET NULL")
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+
+    thumbnail_image: Mapped["EmailImage | None"] = relationship()
 
 
 class VideoAssetChunk(Base):

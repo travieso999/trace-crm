@@ -15,6 +15,7 @@ from app.models import (
     CampaignContact,
     Contact,
     EmailAccount,
+    EmailImage,
     EmailTemplate,
     ImportBatch,
     ScheduledMessage,
@@ -564,6 +565,18 @@ def _chosen_video(db: Session, body: PreviewIn) -> VideoAsset | None:
     return asset
 
 
+def _chosen_link(db: Session, body: PreviewIn, asset: VideoAsset | None, *, on_screen: bool):
+    """The preview block and the image behind it. The on-screen preview and a test email both come through here, so
+    they use the same thumbnail."""
+    if asset is None or not body.video_preview:
+        return None, None
+    custom = db.get(EmailImage, body.video_thumbnail_id) if body.video_thumbnail_id else None
+    if body.video_thumbnail_id and custom is None:
+        raise HTTPException(422, "That thumbnail no longer exists; upload it again")
+    image = video_assets.chosen_image(asset, custom)
+    return video_assets.video_link(asset, image, body.video_cta_text, on_screen=on_screen), image
+
+
 def _preview_vars(db: Session, body: PreviewIn) -> tuple[dict, Campaign | None, str]:
     campaign = _get(db, body.campaign_id) if body.campaign_id else None
     contact = None
@@ -589,11 +602,11 @@ def preview(body: PreviewIn, _: User = Depends(reader), db: Session = Depends(ge
     except MissingVariables:
         footer = None
     asset = _chosen_video(db, body)
+    link, _image = _chosen_link(db, body, asset, on_screen=True)
     try:
         r = render_email(body.subject, body.body, vars_,
                          policy=campaign.missing_variable_policy if campaign else "block",
-                         fallbacks=campaign.variable_fallbacks if campaign else None, footer=footer,
-                         video=video_assets.video_link(asset, on_screen=True) if body.video_preview else None)
+                         fallbacks=campaign.variable_fallbacks if campaign else None, footer=footer, video=link)
     except MissingVariables as exc:
         return {"ok": False, "missing": exc.names, "recipient": who,
                 "variables_used": sorted(variables_in(body.subject) | variables_in(body.body))}
@@ -624,19 +637,20 @@ def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), 
         raise HTTPException(422, f"The clickable preview needs a video link. Add one to “{asset.filename}”")
     if asset is not None and body.video_attach and (problem := video_assets.size_problem(db, asset, mailbox.provider)):
         raise HTTPException(409, problem)
+    link, image = _chosen_link(db, body, asset, on_screen=False)
     try:
         r = render_email(body.subject, body.body, vars_,
                          policy=campaign.missing_variable_policy if campaign else "block",
                          fallbacks=campaign.variable_fallbacks if campaign else None,
                          footer=sending.footer_text(db, f"{get_settings().public_url.rstrip('/')}/u/test"),
-                         video=video_assets.video_link(asset) if body.video_preview else None)
+                         video=link)
     except MissingVariables as exc:
         raise HTTPException(422, str(exc)) from exc
     rfc_id = new_message_id(mailbox.email)
     out = OutgoingMessage(from_email=mailbox.email, from_name=mailbox.display_name, to_email=to,
                           subject=f"[TEST] {r.subject}", text=r.text, html=r.html, rfc_message_id=rfc_id)
-    if body.video_preview:
-        out.inline_images = video_assets.inline_images(asset)
+    if link is not None:
+        out.inline_images = video_assets.inline_images(asset, image)
     if asset is not None and body.video_attach:
         try:
             out.attachments = [video_assets.load_attachment(db, asset.id)]

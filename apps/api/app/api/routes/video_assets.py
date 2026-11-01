@@ -4,17 +4,25 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import audit, reader, writer
 from app.core.db import get_db
-from app.models import Campaign, User, VideoAsset
+from app.models import Campaign, EmailImage, User, VideoAsset
 from app.schemas.common import Message, ORMModel
 from app.services import video_assets as svc
 
 router = APIRouter(prefix="/api/video-assets", tags=["video"])
+# under /u/ like unsubscribe links: public, and already routed to the API by the website
+public_router = APIRouter(prefix="/u/thumb", tags=["video"], include_in_schema=False)
+
+# the bytes behind a link never change, so mail proxies may keep them
+PUBLIC_IMAGE_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff",
+                        "Content-Security-Policy": "default-src 'none'", "Cross-Origin-Resource-Policy": "cross-origin",
+                        "X-Robots-Tag": "noindex"}
 
 
 class UploadIn(BaseModel):
@@ -34,15 +42,32 @@ class AssetOut(ORMModel):
     status: str
     link_url: str | None
     has_thumbnail: bool = False
+    thumbnail_url: str | None = None
     warnings: list[str] = []
     created_at: datetime
 
 
+class ThumbnailOut(BaseModel):
+    id: uuid.UUID
+    filename: str
+    width: int | None
+    height: int | None
+    size_bytes: int
+    url: str
+
+
 def _out(db: Session, asset: VideoAsset, mailboxes=()) -> AssetOut:
     o = AssetOut.model_validate(asset)
-    o.has_thumbnail = bool(asset.thumbnail_type)
+    image = asset.thumbnail_image
+    o.has_thumbnail = image is not None
+    o.thumbnail_url = svc.image_path(image) if image else None
     o.warnings = svc.warnings(db, asset, list(mailboxes))
     return o
+
+
+def _thumbnail_out(image: EmailImage) -> ThumbnailOut:
+    return ThumbnailOut(id=image.id, filename=image.filename, width=image.width, height=image.height,
+                        size_bytes=image.size_bytes, url=svc.image_path(image))
 
 
 def _get(db: Session, asset_id: uuid.UUID) -> VideoAsset:
@@ -110,15 +135,48 @@ def complete_upload(asset_id: uuid.UUID, request: Request, user: User = Depends(
 
 
 @router.put("/{asset_id}/thumbnail", response_model=AssetOut)
-async def put_thumbnail(asset_id: uuid.UUID, request: Request, _: User = Depends(writer), db: Session = Depends(get_db)):
+async def put_thumbnail(asset_id: uuid.UUID, request: Request, user: User = Depends(writer), db: Session = Depends(get_db)):
+    """The thumbnail captured from the video in the browser when it is uploaded."""
     asset = _get(db, asset_id)
     data = await _read_body(request, svc.MAX_THUMBNAIL_BYTES)
     try:
-        svc.set_thumbnail(asset, data)
+        svc.set_thumbnail(db, asset, data, user.id)
     except svc.VideoError as exc:
         raise _error(exc) from exc
     db.commit()
     return _out(db, asset)
+
+
+@router.post("/thumbnails", response_model=ThumbnailOut, status_code=201)
+async def upload_custom_thumbnail(request: Request, filename: str | None = None, user: User = Depends(writer),
+                                  db: Session = Depends(get_db)):
+    """A custom thumbnail for one campaign email. The step points at the result when the sequence is saved."""
+    data = await _read_body(request, svc.MAX_IMAGE_BYTES)
+    try:
+        image = svc.store_image(db, data, filename, user.id, widescreen=True)
+    except svc.VideoError as exc:
+        raise _error(exc) from exc
+    audit(db, user, "video.thumbnail_uploaded", "email_image", image.id, request, filename=image.filename)
+    db.commit()
+    return _thumbnail_out(image)
+
+
+@router.get("/thumbnails/{image_id}", response_model=ThumbnailOut)
+def get_custom_thumbnail(image_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
+    image = db.get(EmailImage, image_id)
+    if image is None:
+        raise HTTPException(404, "Thumbnail not found")
+    return _thumbnail_out(image)
+
+
+@public_router.get("/{token}")
+def public_thumbnail(token: str, db: Session = Depends(get_db)):
+    """What recipients' mail clients load. The link is signed, so only images already placed in an email can be
+    reached this way, and only images: there is no equivalent for a video's bytes."""
+    image = svc.image_for_token(db, token)
+    if image is None:
+        raise HTTPException(404, "Not found")
+    return Response(image.data, media_type=image.content_type, headers=PUBLIC_IMAGE_HEADERS)
 
 
 @router.patch("/{asset_id}", response_model=AssetOut)

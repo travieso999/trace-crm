@@ -2,12 +2,14 @@
 Real Postgres; Google and SMTP are in-process fakes, so nothing leaves the machine."""
 
 import email
+import io
 import json
 import struct
 from email import policy
 
 import httpx
 import pytest
+from PIL import Image
 from sqlalchemy import select
 
 from app.core.config import get_settings
@@ -22,7 +24,14 @@ from tests.conftest import login, make_user
 from tests.test_gmail import ALWAYS, FakeGoogle, connect
 from tests.test_sending import due_now, make_contacts, outbox, sent_files, setup_campaign, setup_mailbox  # noqa: F401
 
-JPEG = b"\xff\xd8\xff\xe0" + b"thumbnail" * 20
+
+def real_image(size=(320, 180), fmt="JPEG") -> bytes:
+    out = io.BytesIO()
+    Image.new("RGB", size, (30, 90, 160)).save(out, fmt)
+    return out.getvalue()
+
+
+JPEG = real_image()
 LINK = "https://videos.example.com/watch/42"
 
 
@@ -147,7 +156,7 @@ def test_one_upload_is_reused_across_campaigns(client, db, outbox, compliance): 
 def test_thumbnail_must_be_a_small_image(client):
     aid = upload(client, make_mp4())["id"]
     assert client.put(f"/api/video-assets/{aid}/thumbnail", content=b"<svg onload=alert(1)>").status_code == 422
-    assert client.put(f"/api/video-assets/{aid}/thumbnail", content=JPEG + b"x" * svc.MAX_THUMBNAIL_BYTES).status_code == 413
+    assert client.put(f"/api/video-assets/{aid}/thumbnail", content=b"x" * (svc.MAX_THUMBNAIL_BYTES + 1)).status_code == 413
     r = client.put(f"/api/video-assets/{aid}/thumbnail", content=JPEG)
     assert r.status_code == 200 and r.json()["has_thumbnail"] is True
 
@@ -163,7 +172,8 @@ def test_video_link_must_be_a_plain_web_address(client, url):
 def test_no_route_serves_video_bytes(app):
     paths = {p: m for p, m in app.openapi()["paths"].items() if p.startswith("/api/video-assets")}
     assert "/api/video-assets/{asset_id}/complete" in paths  # the map really covers this router
-    assert [p for p, methods in paths.items() if "get" in methods] == ["/api/video-assets"]  # the JSON listing only
+    # JSON only: the listing and a thumbnail's details
+    assert [p for p, methods in paths.items() if "get" in methods] == ["/api/video-assets", "/api/video-assets/thumbnails/{image_id}"]
 
 
 def test_library_requires_a_session_and_writes_need_a_writer(app, client):
@@ -188,8 +198,8 @@ def test_listing_never_contains_the_file_or_thumbnail(client):
     aid = upload(client, data)["id"]
     client.put(f"/api/video-assets/{aid}/thumbnail", content=JPEG)
     r = client.get("/api/video-assets")
-    assert set(r.json()["items"][0]) == {"id", "filename", "size_bytes", "status", "link_url", "has_thumbnail", "warnings",
-                                         "created_at"}
+    assert set(r.json()["items"][0]) == {"id", "filename", "size_bytes", "status", "link_url", "has_thumbnail", "thumbnail_url",
+                                         "warnings", "created_at"}
     assert r.headers["cache-control"] == "no-store"
 
 
@@ -409,7 +419,7 @@ def test_each_option_includes_exactly_what_it_says(client, db, outbox, complianc
     html = m.get_body(("html",)).get_content()
     text = m.get_body(("plain",)).get_content()
     assert (LINK in html and LINK in text) is preview
-    assert ("cid:video-" in html) is preview
+    assert ("cid:thumb-" in html) is preview  # no public address in tests, so the image travels inside the email
     # the link sits above the unsubscribe footer in both parts
     if preview:
         assert html.index(LINK) < html.index("/u/") and text.index(LINK) < text.index("/u/")

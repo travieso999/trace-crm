@@ -13,6 +13,7 @@ from app.models import (
     CampaignContact,
     Contact,
     EmailEvent,
+    EmailImage,
     ScheduledMessage,
     SequenceStep,
     SuppressionEntry,
@@ -373,6 +374,8 @@ def replace_steps(db: Session, campaign: Campaign, steps: list[dict]) -> None:
             asset = db.get(VideoAsset, data["video_asset_id"]) if data.get("video_asset_id") else None
             if asset is None or asset.status != "ready":
                 raise CampaignError(f"Step {i}: choose an uploaded video, or untick the video options")
+            if data.get("video_thumbnail_id") and db.get(EmailImage, data["video_thumbnail_id"]) is None:
+                raise CampaignError(f"Step {i}: that thumbnail no longer exists; upload it again")
     # move existing positions out of the way to satisfy the unique (campaign, position) constraint
     for s in existing.values():
         s.position = -s.position - 1000
@@ -394,7 +397,10 @@ def replace_steps(db: Session, campaign: Campaign, steps: list[dict]) -> None:
         step.send_at = data.get("send_at")
         step.video_preview = bool(data.get("video_preview"))
         step.video_attach = bool(data.get("video_attach"))
-        step.video_asset_id = data.get("video_asset_id") if step.video_preview or step.video_attach else None
+        has_video = step.video_preview or step.video_attach
+        step.video_asset_id = data.get("video_asset_id") if has_video else None
+        step.video_thumbnail_id = data.get("video_thumbnail_id") if has_video else None
+        step.video_cta_text = " ".join((data.get("video_cta_text") or "").split())[:80] or None
         new_list.append(step)
     for sid, s in existing.items():
         if sid not in keep_ids:
@@ -425,7 +431,8 @@ def duplicate(db: Session, campaign: Campaign, user: User | None) -> Campaign:
                             business_days=s.business_days, subject=s.subject, body=s.body,
                             reply_in_thread=s.reply_in_thread, name=s.name, status=s.status,
                             video_asset_id=s.video_asset_id, video_preview=s.video_preview,
-                            video_attach=s.video_attach))
+                            video_attach=s.video_attach, video_thumbnail_id=s.video_thumbnail_id,
+                            video_cta_text=s.video_cta_text))
     db.flush()
     return copy
 

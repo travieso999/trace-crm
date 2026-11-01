@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { FileText, ListOrdered, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { EmailEditor } from "@/components/email-editor";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -155,7 +155,7 @@ function Templates({ canWrite }: { canWrite: boolean }) {
                 <Input id="tpl-subject" maxLength={500} value={draft.subject} onChange={(e) => setDraft({ ...draft, subject: e.target.value })} />
               </Field>
               <Field label="Body" htmlFor="tpl-body" hint="Use {{first_name}}, {{company_name}} and other prospect fields.">
-                <Textarea id="tpl-body" rows={8} className="font-mono text-[13px]" value={draft.body} onChange={(e) => setDraft({ ...draft, body: e.target.value })} />
+                <EmailEditor id="tpl-body" signatureButton value={draft.body} onChange={(body) => setDraft({ ...draft, body })} />
               </Field>
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="outline" onClick={() => setDraft(null)}>

@@ -47,7 +47,14 @@ from app.services.audience import AudienceFilter, contacts_query
 from app.services.contacts import get_or_create_tags, suppressed_set
 from app.services.csv_import import export_contacts_csv
 from app.services.normalize import InvalidEmail, normalize_email
-from app.services.rendering import STANDARD_VARIABLES, MissingVariables, render_email, variables_in
+from app.services.rendering import (
+    STANDARD_VARIABLES,
+    MissingVariables,
+    render_email,
+    signature_to_text,
+    uses_signature,
+    variables_in,
+)
 
 router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 templates_router = APIRouter(prefix="/api/templates", tags=["templates"])
@@ -606,12 +613,15 @@ def preview(body: PreviewIn, _: User = Depends(reader), db: Session = Depends(ge
     try:
         r = render_email(body.subject, body.body, vars_,
                          policy=campaign.missing_variable_policy if campaign else "block",
-                         fallbacks=campaign.variable_fallbacks if campaign else None, footer=footer, video=link)
+                         fallbacks=campaign.variable_fallbacks if campaign else None, footer=footer, video=link,
+                         signature=sending.campaign_signature(campaign) if campaign else None)
     except MissingVariables as exc:
         return {"ok": False, "missing": exc.names, "recipient": who,
                 "variables_used": sorted(variables_in(body.subject) | variables_in(body.body))}
     attaching = asset is not None and body.video_attach
-    return {"ok": True, "subject": r.subject, "html": r.html, "text": r.text, "recipient": who, "missing": [],
+    unsigned = [m.email for m in campaign.mailboxes if not m.signature_html] if campaign else []
+    return {"ok": True, "signature_missing": unsigned if uses_signature(body.body) else [],
+            "subject": r.subject, "html": r.html, "text": r.text, "recipient": who, "missing": [],
             "variables_used": sorted(variables_in(body.subject) | variables_in(body.body)),
             "attachment": video_assets.attachment_info(asset) if attaching else None,
             "attachment_warnings": video_assets.warnings(db, asset, campaign.mailboxes if campaign else []) if attaching else [],
@@ -643,7 +653,7 @@ def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), 
                          policy=campaign.missing_variable_policy if campaign else "block",
                          fallbacks=campaign.variable_fallbacks if campaign else None,
                          footer=sending.footer_text(db, f"{get_settings().public_url.rstrip('/')}/u/test"),
-                         video=link)
+                         video=link, signature=signature_to_text(mailbox.signature_html))
     except MissingVariables as exc:
         raise HTTPException(422, str(exc)) from exc
     rfc_id = new_message_id(mailbox.email)

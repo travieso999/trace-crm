@@ -248,6 +248,15 @@ Legend: [x] done & verified Â· [~] implemented, awaiting external verification Â
 - [x] Verified: pytest 271 passed (65 in test_custom_thumbnail.py); ruff, tsc, eslint, `next build`; migration
       up/down/up with an existing thumbnail, `alembic check`; block rendered in Edge at 760 px and 375 px
 
+## Email compose box: links on words and signatures (2026-10-31)
+- [x] Sequence and template bodies use a Gmail-style editor (`email-editor.tsx`, TipTap). The stored body stays plain text:
+      a line per paragraph, `[label](url)` for a link on words. No database change
+- [x] Links only to http(s), mailto and tel. Markup is read before values go in, so prospect data can't add a link
+- [x] `{{signature}}` places the sending mailbox's signature (no migration: `signature_html` holds it). Starting a campaign
+      is blocked while one of its connected mailboxes has none
+- [x] Verified: full pytest suite, ruff, tsc, eslint, `next build`; editor driven in Edge (link, Ctrl+K, edit, remove, paste,
+      undo, signature, reload unchanged). Not yet seen in real Gmail or Outlook
+
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).
 - No Microsoft / OpenAI credentials yet. Google OAuth client is set by the user in apps/api/.env (git-ignored).

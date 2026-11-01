@@ -48,7 +48,7 @@ from app.providers.mime import new_message_id
 from app.services import app_settings, video_assets
 from app.services import campaigns as campaign_service
 from app.services.contacts import is_suppressed, log_activity, set_lead_status, template_variables
-from app.services.rendering import MissingVariables, Rendered, render_email, render_string
+from app.services.rendering import MissingVariables, Rendered, render_email, render_string, signature_to_text
 from app.services.scheduling import add_delay, next_joint_window, next_window_start, start_of_local_day
 
 logger = logging.getLogger("app.sending")
@@ -105,7 +105,13 @@ def contact_variables(db: Session, contact: Contact) -> dict[str, str]:
     return vars_
 
 
-def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: CampaignContact, contact: Contact) -> Rendered:
+def campaign_signature(campaign: Campaign) -> str | None:
+    """For previews, before a prospect has a mailbox: the first signature among the campaign's mailboxes."""
+    return next((signature_to_text(m.signature_html) for m in campaign.mailboxes if m.signature_html), None)
+
+
+def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: CampaignContact, contact: Contact,
+                mailbox: EmailAccount | None = None) -> Rendered:
     """Render a step for one lead. Raises MissingVariables rather than sending a broken email."""
     unsub = unsubscribe_url(contact.id, campaign.id)
     threaded = step.position > 1 and step.reply_in_thread and cc.first_subject
@@ -117,6 +123,7 @@ def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: Campaig
         subject_tpl if not threaded else "", step.body, contact_variables(db, contact),
         policy=campaign.missing_variable_policy, fallbacks=campaign.variable_fallbacks,
         footer=footer_text(db, unsub), video=video_assets.step_link(step),
+        signature=signature_to_text(mailbox.signature_html) if mailbox else None,
     )
     if threaded:
         rendered.subject = " ".join(subject_tpl.split())  # already-rendered subject of step 1
@@ -313,7 +320,7 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
             return defer(mailbox.last_sent_at + timedelta(seconds=mailbox.min_interval_seconds), "minimum spacing")
 
         try:
-            rendered = render_step(db, campaign, step, cc, contact)
+            rendered = render_step(db, campaign, step, cc, contact, mailbox)
         except MissingVariables as exc:
             sm.status, sm.last_error = "failed", str(exc)
             cc.status, cc.stop_reason, cc.next_send_at = "error", "missing_variables", None
@@ -534,7 +541,7 @@ def reconcile_unknown(now: datetime | None = None) -> dict:
                 out["requeued"] += 1
                 continue
             rendered = render_step(db, db.get(Campaign, sm.campaign_id), db.get(SequenceStep, sm.sequence_step_id),
-                                   cc, db.get(Contact, cc.contact_id))
+                                   cc, db.get(Contact, cc.contact_id), mailbox)
         record_success(sm_id, found, rendered)
         out["sent"] += 1
     return out

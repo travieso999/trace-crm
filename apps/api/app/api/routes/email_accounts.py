@@ -28,6 +28,7 @@ from app.schemas.mail import EmailAccountOut, EmailAccountUpdate
 from app.services import app_settings, google_oauth, inbound, sending
 from app.services.campaigns import release_window_waits
 from app.services.normalize import InvalidEmail, normalize_email
+from app.services.rendering import signature_to_html
 
 logger = logging.getLogger("app.email_accounts")
 router = APIRouter(prefix="/api/email-accounts", tags=["email accounts"])
@@ -314,6 +315,11 @@ def update_account(account_id: uuid.UUID, body: EmailAccountUpdate, request: Req
     for f in ("display_name", "daily_limit", "min_interval_seconds", "signature_html"):
         if f in data:
             setattr(a, f, data[f])
+    if "signature_text" in data:
+        signature = (data["signature_text"] or "").strip()
+        if "{{" in signature or "}}" in signature:
+            raise HTTPException(422, "A signature can’t contain {{variables}}: it is also used for manual replies")
+        a.signature_html = signature_to_html(signature) if signature else None
     if data.get("schedule"):
         a.schedule = {k: v for k, v in data["schedule"].items() if k != "use_recipient_timezone"}
         release_window_waits(db, mailbox_id=a.id)

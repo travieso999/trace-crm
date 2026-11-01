@@ -97,6 +97,7 @@ export type EmailAccount = {
   min_interval_seconds: number;
   schedule: Schedule;
   signature_html: string | null;
+  signature_text: string;
   last_synced_at: string | null;
   last_sent_at: string | null;
   consecutive_failures: number;
@@ -475,6 +476,7 @@ export type PreviewResult = {
   attachment?: AttachmentInfo | null;
   attachment_warnings?: string[];
   preview_link_missing?: boolean;
+  signature_missing?: string[];
 };
 
 export type InboxItem = {

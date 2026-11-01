@@ -2,10 +2,11 @@ import re
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from app.schemas.common import ORMModel
 from app.services.audience import AudienceFilter
+from app.services.rendering import signature_to_text
 
 
 class ScheduleIn(BaseModel):
@@ -65,6 +66,11 @@ class EmailAccountOut(ORMModel):
     sent_total: int = 0
     campaigns: list[dict] = []
 
+    @computed_field
+    @property
+    def signature_text(self) -> str:
+        return signature_to_text(self.signature_html)
+
 
 class EmailAccountUpdate(BaseModel):
     display_name: str | None = Field(default=None, max_length=200)
@@ -72,6 +78,7 @@ class EmailAccountUpdate(BaseModel):
     min_interval_seconds: int | None = Field(default=None, ge=30, le=3600)
     schedule: ScheduleIn | None = None
     signature_html: str | None = Field(default=None, max_length=5000)
+    signature_text: str | None = Field(default=None, max_length=5000)  # what the editor saves: lines and [label](url)
 
 
 class StepIn(BaseModel):

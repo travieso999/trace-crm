@@ -6,13 +6,13 @@ import { toast } from "sonner";
 import { ArrowDown, ArrowUp, Eye, Plus, Send, Trash2, Users, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ConfirmDialog, ErrorState, Field, NativeSelect, Spinner } from "@/components/common";
 import { stepLabel } from "@/components/campaign/labels";
 import { AttachmentChip, VideoSection, WarningList } from "@/components/campaign/video-section";
 import { useMe } from "@/components/app-shell";
+import { EmailEditor, type EmailEditorHandle } from "@/components/email-editor";
 import { EmailFrame } from "@/components/email-frame";
 import { api, errorMessage } from "@/lib/api";
 import { dateTime, fullName, humanize, num, relTime } from "@/lib/format";
@@ -168,21 +168,9 @@ function StepCard({
   onPreview: () => void;
   onRecipients?: () => void;
 }) {
-  const bodyRef = React.useRef<HTMLTextAreaElement>(null);
+  const bodyRef = React.useRef<EmailEditorHandle>(null);
   const first = index === 0;
   const showSubject = first || !step.reply_in_thread;
-  function insert(name: string) {
-    const el = bodyRef.current;
-    const token = `{{${name}}}`;
-    if (!el) return onChange({ ...step, body: step.body + token });
-    const start = el.selectionStart ?? step.body.length;
-    const end = el.selectionEnd ?? start;
-    onChange({ ...step, body: step.body.slice(0, start) + token + step.body.slice(end) });
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(start + token.length, start + token.length);
-    });
-  }
   return (
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
@@ -271,14 +259,14 @@ function StepCard({
         ) : (
           <p className="text-xs text-muted-foreground">Subject: “Re: ” + the step 1 subject, so it lands in the same thread.</p>
         )}
-        <Field label="Body" htmlFor={`body-${index}`} hint="Plain text. Links are clickable. The unsubscribe footer is added automatically.">
-          <Textarea ref={bodyRef} id={`body-${index}`} rows={8} maxLength={20000} disabled={readOnly} value={step.body}
-            onChange={(e) => onChange({ ...step, body: e.target.value })} className="font-mono text-[13px]" />
+        <Field label="Body" htmlFor={`body-${index}`} hint="Select words and press the link button (Ctrl+K) to link them. The unsubscribe footer is added automatically.">
+          <EmailEditor id={`body-${index}`} editorRef={bodyRef} signatureButton readOnly={readOnly} value={step.body}
+            onChange={(body) => onChange({ ...step, body })} />
         </Field>
         <VideoSection step={step} index={index} readOnly={readOnly} campaignId={campaignId} onChange={onChange} />
         {!readOnly && (
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <VariableButtons names={variables} onInsert={insert} />
+            <VariableButtons names={variables} onInsert={(n) => bodyRef.current?.insertText(`{{${n}}}`)} />
             {templates.length > 0 && (
               <NativeSelect
                 aria-label="Use a template"
@@ -497,6 +485,11 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
               {preview.data.preview_link_missing && (
                 <p className="rounded-md bg-amber-500/12 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300" role="status">
                   The clickable preview needs a video link before this email can be sent.
+                </p>
+              )}
+              {(preview.data.signature_missing?.length ?? 0) > 0 && (
+                <p className="rounded-md bg-amber-500/12 px-2 py-1.5 text-xs text-amber-800 dark:text-amber-300" role="status">
+                  No signature set for {preview.data.signature_missing!.join(", ")}. Add it in Email Accounts, under the mailbox’s settings.
                 </p>
               )}
               {preview.data.attachment && <AttachmentChip attachment={preview.data.attachment} />}

@@ -8,12 +8,12 @@ import { toast } from "sonner";
 import { FlaskConical, Mail, MoreHorizontal, Pause, Play, Plus, RefreshCw, Send, Settings2, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog, EmptyState, ErrorState, Field, NativeSelect, PageHeader, StatusBadge } from "@/components/common";
+import { EmailEditor } from "@/components/email-editor";
 import { ScheduleEditor, scheduleSummary } from "@/components/schedule-editor";
 import { useIsAdmin } from "@/components/app-shell";
 import { api, errorMessage } from "@/lib/api";
@@ -330,7 +330,7 @@ function ConnectDialog({ open, onOpenChange, onSmtp }: { open: boolean; onOpenCh
 
 function SettingsDialog({ account, onOpenChange }: { account: EmailAccount | null; onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
-  const [draft, setDraft] = React.useState<{ display_name: string; daily_limit: number; min_interval_seconds: number; schedule: Schedule; signature_html: string } | null>(null);
+  const [draft, setDraft] = React.useState<{ display_name: string; daily_limit: number; min_interval_seconds: number; schedule: Schedule; signature_text: string } | null>(null);
   const [forId, setForId] = React.useState<string | null>(null);
   if (account && forId !== account.id) {
     setForId(account.id);
@@ -339,11 +339,15 @@ function SettingsDialog({ account, onOpenChange }: { account: EmailAccount | nul
       daily_limit: account.daily_limit,
       min_interval_seconds: account.min_interval_seconds,
       schedule: account.schedule,
-      signature_html: account.signature_html ?? "",
+      signature_text: account.signature_text,
     });
   }
   const save = useMutation({
-    mutationFn: () => api<EmailAccount>(`/api/email-accounts/${account!.id}`, { method: "PATCH", body: { ...draft, signature_html: draft!.signature_html || null } }),
+    mutationFn: () => {
+      const { signature_text, ...rest } = draft!;
+      // left out when untouched, so an older signature isn't rewritten just by saving other settings
+      return api<EmailAccount>(`/api/email-accounts/${account!.id}`, { method: "PATCH", body: signature_text === account!.signature_text ? rest : draft });
+    },
     onSuccess: () => {
       toast.success("Mailbox settings saved");
       qc.invalidateQueries({ queryKey: ["email-accounts"] });
@@ -380,8 +384,8 @@ function SettingsDialog({ account, onOpenChange }: { account: EmailAccount | nul
               </Field>
             </div>
             <ScheduleEditor value={draft.schedule} onChange={(schedule) => setDraft({ ...draft, schedule })} />
-            <Field label="Signature (HTML, used for manual replies)" htmlFor="mb-sig">
-              <Textarea id="mb-sig" rows={3} value={draft.signature_html} onChange={(e) => setDraft({ ...draft, signature_html: e.target.value })} />
+            <Field label="Signature" htmlFor="mb-sig" hint="Goes on manual replies, and on campaign emails where you press Signature in the sequence.">
+              <EmailEditor id="mb-sig" value={draft.signature_text} onChange={(signature_text) => setDraft({ ...draft, signature_text })} />
             </Field>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

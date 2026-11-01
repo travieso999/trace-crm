@@ -24,7 +24,7 @@ from app.models.base import utcnow
 from app.providers import send_block_reason
 from app.services import app_settings, video_assets
 from app.services.contacts import log_activity, template_variables
-from app.services.rendering import MissingVariables, render_string
+from app.services.rendering import MissingVariables, render_string, uses_signature
 
 # enrollment states that still expect emails; paused prospects resume where they left off
 LIVE = ("active", "paused")
@@ -75,6 +75,10 @@ def preflight(db: Session, campaign: Campaign) -> list[str]:
     for s in steps:
         if problem := video_assets.step_problem(db, s, {m.provider for m in connected}):
             problems.append(problem)
+    unsigned = [m.email for m in connected if not m.signature_html]
+    if unsigned and (signed_steps := [s.position for s in steps if uses_signature(s.body)]):
+        problems.append(f"Step {signed_steps[0]} uses a signature, but {', '.join(unsigned)} has none: "
+                        "add it in the mailbox's settings")
     usable = [m for m in connected if send_block_reason(m, "campaign") is None]
     if not connected:
         problems.append("Assign at least one connected email account")

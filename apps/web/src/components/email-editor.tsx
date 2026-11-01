@@ -9,7 +9,7 @@ import Text from "@tiptap/extension-text";
 import { UndoRedo } from "@tiptap/extensions";
 import { Fragment, Slice } from "@tiptap/pm/model";
 import { EditorContent, useEditor, useEditorState, type Editor, type JSONContent } from "@tiptap/react";
-import { ExternalLink, Link2, PenLine, Pencil, Unlink } from "lucide-react";
+import { ExternalLink, Link2, PenLine, Pencil, Unlink, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -19,6 +19,7 @@ import { Field } from "@/components/common";
    paragraph here, and a link on words is [label](url). A bare address is a link whose words are the address. */
 const LINK_OR_URL = /\[([^[\]\n]+)\]\(\s*((?:https?:\/\/|mailto:|tel:|(?=\{\{))(?:\{\{[^{}]*\}\}|[^\s()<>[\]{}])*)\s*\)|https?:\/\/[^\s<>"']+/g;
 const SIGNATURE = /\{\{\s*signature\s*(?:\|[^{}]*)?\}\}/;
+const VIDEO_MARKER = /\*{0,2}\[\s*INSERT VIDEO THUMBNAIL HERE\s*\]\*{0,2}|\{\{\s*video\s*\}\}/gi;
 
 function textNode(text: string, href?: string): JSONContent {
   return href ? { type: "text", text, marks: [{ type: "link", attrs: { href } }] } : { type: "text", text };
@@ -136,12 +137,13 @@ function LinkDialog({ editor, open, onOpenChange }: { editor: Editor; open: bool
 export type EmailEditorHandle = { insertText: (text: string) => void };
 
 /** A compose box like Gmail's: links sit on the words, and Enter starts a new line. Reads and writes the stored text. */
-export function EmailEditor({ id, value, onChange, readOnly, signatureButton, editorRef }: {
+export function EmailEditor({ id, value, onChange, readOnly, signatureButton, videoButton, editorRef }: {
   id?: string;
   value: string;
   onChange: (text: string) => void;
   readOnly?: boolean;
   signatureButton?: boolean;
+  videoButton?: boolean;
   editorRef?: React.Ref<EmailEditorHandle>;
 }) {
   const [linkOpen, setLinkOpen] = React.useState(false);
@@ -205,6 +207,32 @@ export function EmailEditor({ id, value, onChange, readOnly, signatureButton, ed
     editor.chain().focus().insertContentAt(editor.state.doc.content.size, paragraphs).run();
   }
 
+  /** Puts the video on its own line under the cursor's line. Pressing it again moves it, so there's only ever one. */
+  function placeVideo() {
+    if (!editor) return;
+    const { state, view } = editor;
+    const ranges: [number, number][] = [];
+    state.doc.descendants((node, pos, parent) => {
+      if (!node.isText) return;
+      for (const m of (node.text ?? "").matchAll(VIDEO_MARKER)) {
+        const alone = parent?.textContent.trim() === m[0] && state.doc.childCount > 1;
+        ranges.push(alone ? [pos - 1, pos - 1 + parent!.nodeSize] : [pos + m.index, pos + m.index + m[0].length]);
+      }
+    });
+    const tr = state.tr;
+    for (const [from, to] of ranges.reverse()) tr.delete(from, to);
+    const $at = tr.doc.resolve(Math.min(tr.mapping.map(state.selection.to), tr.doc.content.size));
+    const inParagraph = $at.parent.type.name === "paragraph";
+    if (inParagraph && !$at.parent.content.size) {
+      tr.insertText("{{video}}", $at.pos);
+    } else {
+      const after = inParagraph ? $at.after() : $at.pos;
+      tr.insert(after, state.schema.nodes.paragraph.create(null, state.schema.text("{{video}}")));
+    }
+    view.dispatch(tr.scrollIntoView());
+    editor.commands.focus();
+  }
+
   return (
     <div className="overflow-hidden rounded-lg border border-input bg-transparent focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50"
       onKeyDown={(e) => {
@@ -223,6 +251,11 @@ export function EmailEditor({ id, value, onChange, readOnly, signatureButton, ed
           {signatureButton && (
             <Button type="button" variant="ghost" size="sm" title="Add the sending mailbox’s signature" onClick={addSignature}>
               <PenLine /> Signature
+            </Button>
+          )}
+          {videoButton && (
+            <Button type="button" variant="ghost" size="sm" title="Put the video under the line your cursor is on" onClick={placeVideo}>
+              <Video /> Video
             </Button>
           )}
           {link !== null && (

@@ -260,7 +260,7 @@ function StepCard({
           <p className="text-xs text-muted-foreground">Subject: “Re: ” + the step 1 subject, so it lands in the same thread.</p>
         )}
         <Field label="Body" htmlFor={`body-${index}`} hint="Select words and press the link button (Ctrl+K) to link them. The unsubscribe footer is added automatically.">
-          <EmailEditor id={`body-${index}`} editorRef={bodyRef} signatureButton readOnly={readOnly} value={step.body}
+          <EmailEditor id={`body-${index}`} editorRef={bodyRef} signatureButton videoButton={!!step.video_asset_id && !!step.video_preview} readOnly={readOnly} value={step.body}
             onChange={(body) => onChange({ ...step, body })} />
         </Field>
         <VideoSection step={step} index={index} readOnly={readOnly} campaignId={campaignId} onChange={onChange} />

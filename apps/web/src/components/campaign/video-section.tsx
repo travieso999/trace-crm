@@ -427,14 +427,14 @@ export function VideoSection({ step, index, readOnly, campaignId, onChange }: {
           </Field>
           <ThumbnailSection step={step} asset={asset} index={index} readOnly={readOnly} onChange={onChange} />
           <p className="text-xs text-muted-foreground">
-            The video block goes after your message, above your sign-off (“Best,” “Thanks,”). To place it elsewhere, put <code>{"{{video}}"}</code> on its own line in the body.
+            To choose where this goes, click a line in the body and press <strong className="font-medium">Video</strong> under it. Press it again on another line to move it. Without that, it goes above your sign-off (“Best,” “Thanks,”).
           </p>
         </div>
       )}
       {step.video_attach && asset && (
         <>
           <p className="text-xs text-muted-foreground">
-            Sent as a real MP4 attachment. Recipients open or download it; don’t expect it to play inside the email.
+            Sent as a real MP4 attachment. Recipients open or download it; don’t expect it to play inside the email. Mail apps always show attachments at the bottom of the email, and that can’t be moved.
           </p>
           <WarningList warnings={asset.warnings} />
         </>

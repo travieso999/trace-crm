@@ -188,6 +188,8 @@ def update_campaign(campaign_id: uuid.UUID, body: CampaignIn, request: Request, 
         raise HTTPException(409, "Finished campaigns cannot be edited; duplicate it instead")
     data = body.model_dump(exclude_unset=True)
     _apply(db, c, data)
+    if data.get("schedule"):
+        svc.release_window_waits(db, campaign_id=c.id)
     audit(db, user, "campaign.updated", "campaign", c.id, request, fields=sorted(data))
     db.commit()
     return _out(db, [c])[0]

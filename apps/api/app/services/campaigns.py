@@ -28,6 +28,9 @@ from app.services.rendering import MissingVariables, render_string
 # enrollment states that still expect emails; paused prospects resume where they left off
 LIVE = ("active", "paused")
 
+# last_error of a message pushed to the next sending window; a changed schedule releases these
+OUTSIDE_WINDOW = "outside sending window"
+
 # Allowed transitions: current -> {target: action name}
 TRANSITIONS: dict[str, set[str]] = {
     "draft": {"scheduled", "active"},
@@ -280,6 +283,26 @@ def enroll_contacts(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID
     return result
 
 
+def release_window_waits(db: Session, *, campaign_id: uuid.UUID | None = None, mailbox_id: uuid.UUID | None = None) -> int:
+    """After a schedule change: messages waiting on the old window become due now. The sender checks the new window
+    when it picks them up, so anything still outside it simply waits for the correct time."""
+    now = utcnow()
+    stmt = select(ScheduledMessage).where(ScheduledMessage.status == "queued", ScheduledMessage.due_at > now,
+                                          ScheduledMessage.last_error.like(f"{OUTSIDE_WINDOW}%"))
+    if campaign_id:
+        stmt = stmt.where(ScheduledMessage.campaign_id == campaign_id)
+    if mailbox_id:
+        stmt = stmt.where(ScheduledMessage.email_account_id == mailbox_id)
+    waiting = list(db.scalars(stmt.with_for_update(skip_locked=True)))
+    for sm in waiting:
+        sm.due_at = now
+    if waiting:
+        db.execute(update(CampaignContact).where(
+            CampaignContact.id.in_([sm.campaign_contact_id for sm in waiting]),
+            CampaignContact.status == "active", CampaignContact.next_send_at > now).values(next_send_at=now))
+    return len(waiting)
+
+
 def _cancel_queued(db: Session, cc_ids: list[uuid.UUID], reason: str) -> None:
     if cc_ids:
         db.execute(
@@ -519,6 +542,10 @@ def send_step_now(db: Session, campaign: Campaign, step: SequenceStep) -> int:
         step.send_at = None
     db.execute(update(CampaignContact).where(*_waiting_for(campaign, step), or_(
         CampaignContact.next_send_at.is_(None), CampaignContact.next_send_at > now)).values(next_send_at=now))
+    # already queued and pushed to a later time: without this they would keep that time
+    db.execute(update(ScheduledMessage).where(ScheduledMessage.sequence_step_id == step.id,
+                                              ScheduledMessage.status == "queued", ScheduledMessage.due_at > now)
+               .values(due_at=now))
     return db.scalar(select(func.count()).select_from(CampaignContact).where(*_waiting_for(campaign, step))) or 0
 
 

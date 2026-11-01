@@ -277,7 +277,7 @@ def test_daily_limit_and_window_defer(client, db, outbox, compliance):
     assert sending.send_due() == {"deferred": 1}
     db.expire_all()
     assert db.scalar(select(ScheduledMessage.last_error).where(ScheduledMessage.status == "queued")) == \
-        "outside sending window"
+        "outside sending window (mailbox schedule)"
 
 
 def test_pause_resume_and_stop(client, db, outbox, compliance):

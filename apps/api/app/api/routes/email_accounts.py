@@ -26,6 +26,7 @@ from app.providers.sandbox import SandboxProvider
 from app.schemas.common import Message
 from app.schemas.mail import EmailAccountOut, EmailAccountUpdate
 from app.services import app_settings, google_oauth, inbound, sending
+from app.services.campaigns import release_window_waits
 from app.services.normalize import InvalidEmail, normalize_email
 
 logger = logging.getLogger("app.email_accounts")
@@ -315,6 +316,7 @@ def update_account(account_id: uuid.UUID, body: EmailAccountUpdate, request: Req
             setattr(a, f, data[f])
     if data.get("schedule"):
         a.schedule = {k: v for k, v in data["schedule"].items() if k != "use_recipient_timezone"}
+        release_window_waits(db, mailbox_id=a.id)
     audit(db, user, "mailbox.updated", "email_account", a.id, request, fields=sorted(data))
     db.commit()
     return _out(db, [a])[0]

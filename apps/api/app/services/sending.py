@@ -300,7 +300,9 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
         recipient_tz = contact.timezone if schedule.get("use_recipient_timezone") else None
         window = next_joint_window(now, [(mailbox.schedule or {}, None), (schedule, recipient_tz)])
         if window > now:
-            return defer(window, "outside sending window")
+            # names the schedule to change: a message goes out only when both windows are open
+            closed = "mailbox" if next_window_start(now, mailbox.schedule or {}) > now else "campaign"
+            return defer(window, f"{campaign_service.OUTSIDE_WINDOW} ({closed} schedule)")
         if sent_today(db, mailbox, now) >= mailbox.daily_limit:
             tomorrow = start_of_local_day(now, (mailbox.schedule or {}).get("timezone")) + timedelta(days=1)
             return defer(next_window_start(tomorrow, mailbox.schedule or {}), "mailbox daily limit reached")

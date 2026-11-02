@@ -19,7 +19,7 @@ def template(aid=None, thumb=None, **kw):
 
 def test_the_default_button_text_and_its_plain_text_version():
     r = render_email("S", "Hi", {}, video=VideoLink(LINK))
-    assert ">Get More Clients Now!</a>" in r.html and "Watch Our" not in r.html
+    assert "&nbsp;&nbsp;Get More Clients Now!</a>" in r.html and "Watch Our" not in r.html
     assert f"Get More Clients Now! {LINK}" in r.text
 
 
@@ -34,7 +34,7 @@ def test_a_step_with_its_own_button_text_keeps_it(client, db, outbox, compliance
         {"subject": "Hi", "body": "Hi", "video_asset_id": aid, "video_preview": True, "video_cta_text": "Mine"}])
     assert sending.send_due() == {"sent": 1}
     [m] = sent_files(outbox)
-    assert ">Mine</a>" in m.get_body(("html",)).get_content()
+    assert "&nbsp;&nbsp;Mine</a>" in m.get_body(("html",)).get_content()
 
 
 # --- templates ----------------------------------------------------------------------------------------------------------

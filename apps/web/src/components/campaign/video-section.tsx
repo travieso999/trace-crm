@@ -39,7 +39,7 @@ export function WarningList({ warnings }: { warnings: string[] }) {
   );
 }
 
-/** A frame of the video as a JPEG (the server adds the play button). Null when this browser can't decode the file. */
+/** A frame of the video as a JPEG. Null when this browser can't decode the file. */
 async function captureThumbnail(file: File): Promise<Blob | null> {
   const url = URL.createObjectURL(file);
   try {
@@ -254,7 +254,6 @@ function ThumbnailSection<T extends VideoFields>({ step, asset, index, readOnly,
   const input = React.useRef<HTMLInputElement>(null);
   const [selected, setSelected] = React.useState<{ url: string; name: string } | null>(null);
   const [error, setError] = React.useState<string | null>(null);
-  const [playButton, setPlayButton] = React.useState(true);
   const customId = step.video_thumbnail_id;
   const custom = useQuery({
     queryKey: ["video-thumbnail", customId],
@@ -266,7 +265,7 @@ function ThumbnailSection<T extends VideoFields>({ step, asset, index, readOnly,
     setSelected(next);
   }
   const upload = useMutation({
-    mutationFn: (file: File) => api<VideoThumbnail>("/api/video-assets/thumbnails", { method: "POST", raw: file, query: { filename: file.name, play_button: playButton } }),
+    mutationFn: (file: File) => api<VideoThumbnail>("/api/video-assets/thumbnails", { method: "POST", raw: file, query: { filename: file.name } }),
     onSuccess: (t) => {
       qc.setQueryData(["video-thumbnail", t.id], t);
       showSelected(null);
@@ -326,17 +325,11 @@ function ThumbnailSection<T extends VideoFields>({ step, asset, index, readOnly,
               )}
             </div>
           )}
-          {!readOnly && (
-            <label className="flex items-center gap-2 text-xs">
-              <input type="checkbox" className="size-4 accent-[var(--primary)]" checked={playButton} onChange={(e) => setPlayButton(e.target.checked)} />
-              Add a white play button (untick if your design has its own). Applies to the next image you upload.
-            </label>
-          )}
           <p className="text-xs text-muted-foreground">PNG, JPG or WebP, 16:9 such as 1280x720, up to 3 MB.</p>
           {error && <p className="rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive" role="alert">{error}</p>}
         </div>
       </div>
-      <Field label="Button text" htmlFor={`video-cta-${index}`} hint="The navy bar under the thumbnail. Make sure it matches the video, such as its real length.">
+      <Field label="Button text" htmlFor={`video-cta-${index}`} hint="The dark bar under the thumbnail. Make sure it matches the video, such as its real length.">
         <Input id={`video-cta-${index}`} maxLength={80} disabled={readOnly} value={step.video_cta_text ?? ""} placeholder={DEFAULT_CTA}
           onChange={(e) => onChange({ ...step, video_cta_text: e.target.value || null })} />
       </Field>

@@ -343,7 +343,7 @@ async def upload_signature_image(account_id: uuid.UUID, request: Request, filena
     a = _get(db, account_id)
     data = await read_body(request, video_assets.MAX_IMAGE_BYTES)
     try:
-        a.signature_image = video_assets.store_image(db, data, filename, user.id, widescreen=False, play_button=False)
+        a.signature_image = video_assets.store_image(db, data, filename, user.id, widescreen=False)
     except video_assets.VideoError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     audit(db, user, "mailbox.signature_image_uploaded", "email_account", a.id, request, filename=a.signature_image.filename)

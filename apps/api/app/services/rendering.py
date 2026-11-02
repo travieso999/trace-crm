@@ -32,8 +32,10 @@ class Rendered:
 
 
 DEFAULT_VIDEO_CTA = "Get More Clients Now!"
-VIDEO_BAR_COLOR = "#14213d"
+VIDEO_BAR_COLOR = "#0f0f0d"
+VIDEO_ACCENT_COLOR = "#ff5a33"
 VIDEO_BLOCK_WIDTH = 600
+VIDEO_BLOCK_RADIUS = 14
 # Where the video goes in the body. Both forms are removed from what recipients see, so neither can be delivered as text
 VIDEO_MARKER = re.compile(r"\*{0,2}\[\s*INSERT VIDEO THUMBNAIL HERE\s*\]\*{0,2}|\{\{\s*video\s*\}\}", re.IGNORECASE)
 _VIDEO_SLOT = ""  # private-use character: survives templating and can't be typed by accident
@@ -98,25 +100,33 @@ def signature_image_html(image: SignatureImage) -> str:
 
 
 def _video_html(video: VideoLink) -> str:
-    """Tables and inline styles only: no background images, positioning or scripts, which Gmail and Outlook drop. The
-    play button is part of the image itself. width= is what desktop Outlook obeys; the styles make it fluid elsewhere."""
+    """Tables and inline styles only: no background images, positioning or scripts, which Gmail and Outlook drop. width=
+    is what desktop Outlook obeys; the styles make it fluid elsewhere. Outlook also ignores border-radius, so it gets
+    square corners. The arrow is U+25BA because phones turn U+25B6 into an emoji, and an emoji can't be orange."""
     url = html.escape(video.url, quote=True)
     cta = html.escape(video.cta)
     image = ""
+    radius = f"{VIDEO_BLOCK_RADIUS}px"
     if video.image_src:
+        radius = f"0 0 {VIDEO_BLOCK_RADIUS}px {VIDEO_BLOCK_RADIUS}px"
         image = (f'<tr><td style="padding:0;line-height:0;font-size:0"><a href="{url}" target="_blank" '
                  f'style="display:block;text-decoration:none"><img src="{html.escape(video.image_src, quote=True)}" '
                  f'alt="{html.escape(video.cta, quote=True)}" width="{VIDEO_BLOCK_WIDTH}" border="0" '
-                 f'style="display:block;width:100%;max-width:{VIDEO_BLOCK_WIDTH}px;height:auto;border:0;outline:none">'
-                 '</a></td></tr>')
+                 f'style="display:block;width:100%;max-width:{VIDEO_BLOCK_WIDTH}px;height:auto;border:0;outline:none;'
+                 f'border-radius:{VIDEO_BLOCK_RADIUS}px {VIDEO_BLOCK_RADIUS}px 0 0">'
+                 '</a></td></tr>'
+                 f'<tr><td height="4" bgcolor="{VIDEO_ACCENT_COLOR}" style="height:4px;background-color:{VIDEO_ACCENT_COLOR};'
+                 'padding:0;line-height:4px;font-size:4px">&nbsp;</td></tr>')
     # desktop Outlook ignores max-width and would stretch the bar across the pane: it alone reads this fixed-width wrapper
     return (f'<!--[if mso]><table role="presentation" width="{VIDEO_BLOCK_WIDTH}" cellpadding="0" cellspacing="0" border="0">'
             '<tr><td><![endif]-->'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-            f'style="width:100%;max-width:{VIDEO_BLOCK_WIDTH}px;border-collapse:collapse;margin:16px 0">{image}'
-            f'<tr><td align="center" bgcolor="{VIDEO_BAR_COLOR}" style="background-color:{VIDEO_BAR_COLOR};padding:0">'
-            f'<a href="{url}" target="_blank" style="display:block;padding:9px 12px;color:#ffffff;font-family:Arial,'
-            f'sans-serif;font-size:14px;font-weight:bold;line-height:18px;text-align:center;text-decoration:none">{cta}</a>'
+            f'style="width:100%;max-width:{VIDEO_BLOCK_WIDTH}px;border-collapse:separate;border-spacing:0;margin:16px 0">{image}'
+            f'<tr><td align="center" bgcolor="{VIDEO_BAR_COLOR}" style="background-color:{VIDEO_BAR_COLOR};padding:0;'
+            f'border-radius:{radius}">'
+            f'<a href="{url}" target="_blank" style="display:block;padding:18px 16px;color:#f5f2ea;font-family:Arial,'
+            f'sans-serif;font-size:20px;font-weight:bold;line-height:26px;text-align:center;text-decoration:none">'
+            f'<span style="color:{VIDEO_ACCENT_COLOR}">&#9658;</span>&nbsp;&nbsp;{cta}</a>'
             '</td></tr></table><!--[if mso]></td></tr></table><![endif]-->')
 
 

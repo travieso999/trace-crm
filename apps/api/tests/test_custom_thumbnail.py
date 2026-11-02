@@ -20,7 +20,7 @@ from tests.test_video_attachments import FakeGmailUpload, connected_gmail, gmail
 LINK = "https://videos.example.com/watch/42"
 PUBLIC = "https://crm.example.com"
 RED = (200, 30, 30)
-BAR = 'bgcolor="#14213d"'  # appears once per video block
+BAR = 'bgcolor="#0f0f0d"'  # appears once per video block
 
 
 def picture(size=(1280, 720), fmt="PNG", mode="RGB", color=RED, **save) -> bytes:
@@ -76,24 +76,11 @@ def test_transparent_png_is_flattened_on_white(client, db):
     assert min(r, g, b) > 240
 
 
-def test_play_button_is_baked_into_the_center_of_the_image(client, db):
+def test_nothing_is_drawn_on_an_uploaded_thumbnail(client, db):
     img = stored(db, put_image(client, picture()).json()["id"]).convert("RGB")
-    r, g, b = img.getpixel((640, 360 - 45))  # the white disc, away from the triangle
-    assert min(r, g, b) > 225
-    r, g, b = img.getpixel((640, 360 - 85))  # small enough to leave the design around it visible
-    assert r > 170 and g < 60 and b < 60
-    r, g, b = img.getpixel((640 + 20, 360))  # the navy triangle
-    assert max(r, g, b) < 90
-    r, g, b = img.getpixel((30, 30))  # the picture itself is untouched
-    assert r > 170 and g < 60 and b < 60
-
-
-def test_play_button_can_be_left_out_for_a_design_that_has_its_own(client, db):
-    r = client.c.post("/api/video-assets/thumbnails", params={"filename": "d.png", "play_button": "false"}, content=picture(),
-                      headers={"X-CSRF-Token": client.csrf})
-    assert r.status_code == 201, r.text
-    red, green, blue = stored(db, r.json()["id"]).convert("RGB").getpixel((640, 360))
-    assert red > 170 and green < 60 and blue < 60
+    for point in ((640, 360), (640, 315), (660, 360), (30, 30)):  # the middle, where a play button would go, and a corner
+        r, g, b = img.getpixel(point)
+        assert r > 170 and g < 60 and b < 60, point
 
 
 def test_metadata_in_the_upload_is_not_kept(client, db):
@@ -250,12 +237,14 @@ def test_duplicating_a_campaign_keeps_the_thumbnail(client):
     assert s["video_thumbnail_id"] == t["id"] and s["video_cta_text"] == "Go"
 
 
-def test_automatic_thumbnails_get_the_play_button_and_keep_any_shape(client, db):
+def test_automatic_thumbnails_have_nothing_drawn_on_them_and_keep_any_shape(client, db):
     aid = video_with_link(client)
     assert client.put(f"/api/video-assets/{aid}/thumbnail", content=picture((360, 640), "JPEG")).status_code == 200
     db.expire_all()
     asset = db.get(VideoAsset, aid)
     assert (asset.thumbnail_image.width, asset.thumbnail_image.height) == (360, 640)
+    r, g, b = Image.open(io.BytesIO(asset.thumbnail_image.data)).convert("RGB").getpixel((180, 320))
+    assert r > 170 and g < 60 and b < 60
     assert client.get("/api/video-assets").json()["items"][0]["thumbnail_url"].startswith("/u/thumb/")
 
 
@@ -310,10 +299,22 @@ def test_image_and_bar_both_link_to_the_video_and_the_url_is_not_shown():
     assert LINK not in "".join(p.text)
 
 
-def test_bar_is_navy_with_white_text():
+def test_bar_is_dark_with_an_orange_line_and_arrow():
     html = block()
-    assert 'bgcolor="#14213d"' in html and "background-color:#14213d" in html and "color:#ffffff" in html
+    assert 'bgcolor="#0f0f0d"' in html and "background-color:#0f0f0d" in html and "color:#f5f2ea" in html
     assert "Get More Clients Now!" in html
+    assert html.index("<img") < html.index('<td height="4" bgcolor="#ff5a33"') < html.index(BAR)
+    assert '<span style="color:#ff5a33">&#9658;</span>' in html
+
+
+def test_corners_are_rounded_on_the_outside_only():
+    html = block()
+    assert "border-radius:14px 14px 0 0" in html and "border-radius:0 0 14px 14px" in html
+
+
+def test_without_an_image_the_bar_is_rounded_all_round_and_has_no_line():
+    html = block(image=None)
+    assert "border-radius:14px\"" in html and '<td height="4"' not in html
 
 
 def test_button_text_can_be_customised_and_is_escaped():

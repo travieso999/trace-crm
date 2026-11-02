@@ -232,33 +232,10 @@ def complete_upload(db: Session, asset: VideoAsset) -> tuple[VideoAsset, bool]:
 
 # --- thumbnails -------------------------------------------------------------------------------------------------
 
-def _draw_play_button(img):
-    """Part of the image rather than HTML on top of it, because email clients drop anything layered over an image."""
-    from PIL import Image, ImageDraw, ImageFilter
-
-    scale = 4  # drawn large and shrunk, for smooth edges
-    w, h = img.size
-    size = int(min(w, h) * 0.16) * scale
-    margin = size // 4
-    canvas = size + margin * 2
-    shadow = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).ellipse((margin, margin, margin + size, margin + size), fill=(0, 0, 0, 110))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(size // 24))
-    button = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(button)
-    draw.ellipse((margin, margin, margin + size, margin + size), fill=(255, 255, 255, 245))
-    cx, cy, r = canvas / 2, canvas / 2, size / 2
-    draw.polygon([(cx - r * 0.3, cy - r * 0.46), (cx + r * 0.5, cy), (cx - r * 0.3, cy + r * 0.46)], fill=(20, 33, 61, 255))
-    overlay = Image.alpha_composite(shadow, button).resize((canvas // scale, canvas // scale), Image.LANCZOS)
-    out = img.convert("RGBA")
-    out.alpha_composite(overlay, ((w - overlay.width) // 2, (h - overlay.height) // 2))
-    return out.convert("RGB")
-
-
-def process_image(data: bytes, *, widescreen: bool, play_button: bool = True) -> tuple[bytes, int, int]:
+def process_image(data: bytes, *, widescreen: bool) -> tuple[bytes, int, int]:
     """Check an upload really is an allowed image and make the version emails use: a JPEG (Outlook can't show WebP) at
-    most 1280 wide, with the play button baked in unless the design has its own. Only the result is stored, so metadata
-    and anything else hidden in the original never reach a recipient."""
+    most 1280 wide. Only the result is stored, so metadata and anything else hidden in the original never reach a
+    recipient."""
     from PIL import Image, ImageOps, UnidentifiedImageError
 
     try:
@@ -285,8 +262,6 @@ def process_image(data: bytes, *, widescreen: bool, play_button: bool = True) ->
         flat.alpha_composite(rgba)
         img = flat
     img = img.convert("RGB")
-    if play_button:
-        img = _draw_play_button(img)
     for quality in (85, 75, 65, 50, 35):
         out = io.BytesIO()
         img.save(out, "JPEG", quality=quality, optimize=True)
@@ -300,13 +275,12 @@ def clean_image_name(name: str | None) -> str:
     return re.sub(r'[\x00-\x1f\x7f"<>:|?*]', "", base).strip()[:200] or "thumbnail"
 
 
-def store_image(db: Session, data: bytes, filename: str | None, user_id: uuid.UUID | None, *, widescreen: bool,
-                play_button: bool = True) -> EmailImage:
+def store_image(db: Session, data: bytes, filename: str | None, user_id: uuid.UUID | None, *, widescreen: bool) -> EmailImage:
     if not data:
         raise VideoError("This file is empty")
     if len(data) > MAX_IMAGE_BYTES:
         raise VideoError(f"This image is {_size(len(data))}; the limit is {_size(MAX_IMAGE_BYTES)}", 413)
-    processed, width, height = process_image(data, widescreen=widescreen, play_button=play_button)
+    processed, width, height = process_image(data, widescreen=widescreen)
     image = EmailImage(filename=clean_image_name(filename), content_type="image/jpeg", width=width, height=height,
                        size_bytes=len(processed), data=processed, created_by=user_id)
     db.add(image)

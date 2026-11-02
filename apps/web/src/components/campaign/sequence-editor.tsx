@@ -171,6 +171,8 @@ function StepCard({
   const bodyRef = React.useRef<EmailEditorHandle>(null);
   const first = index === 0;
   const showSubject = first || !step.reply_in_thread;
+  // worked out from the text, so it's still right after a reload, and clears once the email is edited away from the template
+  const usedTemplate = templates.find((t) => t.body.trim() === step.body.trim() && (!showSubject || t.subject.trim() === step.subject.trim()));
   return (
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
@@ -268,9 +270,11 @@ function StepCard({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <VariableButtons names={variables} onInsert={(n) => bodyRef.current?.insertText(`{{${n}}}`)} />
             {templates.length > 0 && (
+              <div className="flex items-center gap-2">
+                {usedTemplate && <span className="text-xs text-muted-foreground">Using template:</span>}
               <NativeSelect
                 aria-label="Use a template"
-                value=""
+                value={usedTemplate?.id ?? ""}
                 onChange={(e) => {
                   const t = templates.find((x) => x.id === e.target.value);
                   if (t) onChange({
@@ -287,6 +291,7 @@ function StepCard({
                   </option>
                 ))}
               </NativeSelect>
+              </div>
             )}
           </div>
         )}

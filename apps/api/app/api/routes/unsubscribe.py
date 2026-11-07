@@ -53,9 +53,21 @@ def _resolve(db: Session, token: str) -> tuple[Contact | None, uuid.UUID | None]
     return contact, campaign_id
 
 
+# Test sends and previews have no prospect, so their footer links to one of these instead of a signed token.
+SAMPLE_TOKENS = ("test", "preview")
+
+
+def _sample(company: str) -> HTMLResponse:
+    return _page(company, "Unsubscribe", "<p>This link came from a test email, so it isn't tied to a prospect and "
+                                         "nothing happens here. In a real campaign email this page asks the recipient "
+                                         "to confirm, and one click stops all emails to them.</p>")
+
+
 @router.get("/{token}", response_class=HTMLResponse)
 def confirm_page(token: str, db: Session = Depends(get_db)):
     company = app_settings.get_section(db, "company").get("name") or ""
+    if token in SAMPLE_TOKENS:
+        return _sample(company)
     contact, _ = _resolve(db, token)
     if contact is None:
         return _page(company, "Link not valid", "<p>This unsubscribe link is invalid or has expired. Reply to the "
@@ -71,6 +83,8 @@ def confirm_page(token: str, db: Session = Depends(get_db)):
 @router.post("/{token}", response_class=HTMLResponse)
 def unsubscribe(token: str, db: Session = Depends(get_db)):
     company = app_settings.get_section(db, "company").get("name") or ""
+    if token in SAMPLE_TOKENS:
+        return _sample(company)
     contact, campaign_id = _resolve(db, token)
     if contact is None:
         return _page(company, "Link not valid", "<p>This unsubscribe link is invalid.</p>", 404)

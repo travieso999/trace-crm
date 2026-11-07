@@ -7,7 +7,7 @@ from datetime import timedelta
 from email import policy
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.core.config import get_settings
 from app.models import (
@@ -334,3 +334,12 @@ def test_test_send_allowlist_and_preview(client, db, outbox, compliance):
     assert p["ok"] is False and p["missing"] == ["nope"]
     p = client.post("/api/campaigns/preview", json={"subject": "Hi {{first_name}}", "body": "Hello"}).json()
     assert p["ok"] and p["subject"] == "Hi Alex" and "Unsubscribe" in p["text"]
+
+
+def test_test_email_unsubscribe_link_opens_a_sample_page(client, db):
+    for token in ("test", "preview"):
+        r = client.get(f"/u/{token}")
+        assert r.status_code == 200 and "test email" in r.text and "Link not valid" not in r.text
+        r = client.post(f"/u/{token}")
+        assert r.status_code == 200 and "test email" in r.text
+    assert db.scalar(select(func.count()).select_from(SuppressionEntry)) == 0

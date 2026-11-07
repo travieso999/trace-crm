@@ -80,17 +80,27 @@ def footer_text(db: Session, unsub_url: str) -> str:
     })
 
 
-TEST_RECIPIENT_ERROR = ("Test emails from a real mailbox can only go to addresses in ALLOWED_TEST_RECIPIENTS "
-                        "(sandbox mailboxes may also use app users)")
+TEST_RECIPIENT_ERROR = ("Real sending isn't turned on (REAL_SENDING is not 'enabled'), so test emails can only go to "
+                        "addresses in ALLOWED_TEST_RECIPIENTS (sandbox mailboxes may also use app users)")
+
+
+def test_recipients_unrestricted(mailbox: EmailAccount) -> bool:
+    """With REAL_SENDING=enabled a real mailbox already sends to anyone, so a test email may go to any address."""
+    return mailbox.provider != "sandbox" and get_settings().real_sending == "enabled"
 
 
 def test_recipients(db: Session, mailbox: EmailAccount) -> set[str]:
-    """Addresses a test email from ``mailbox`` may go to. A real mailbox reaches only ALLOWED_TEST_RECIPIENTS; a
-    sandbox mailbox only writes to the local outbox, so app users are allowed there too."""
+    """Addresses a test email from ``mailbox`` may go to when recipients are restricted (see
+    ``test_recipients_unrestricted``). A real mailbox reaches only ALLOWED_TEST_RECIPIENTS; a sandbox mailbox only
+    writes to the local outbox, so app users are allowed there too."""
     allowed = get_settings().test_recipient_allowlist
     if mailbox.provider == "sandbox":
         allowed = allowed | set(db.scalars(select(User.email).where(User.is_active)))
     return allowed
+
+
+def may_test_send(db: Session, mailbox: EmailAccount, to: str) -> bool:
+    return test_recipients_unrestricted(mailbox) or to in test_recipients(db, mailbox)
 
 
 def contact_variables(db: Session, contact: Contact) -> dict[str, str]:

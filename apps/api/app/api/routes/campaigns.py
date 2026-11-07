@@ -642,8 +642,8 @@ def preview(body: PreviewIn, _: User = Depends(reader), db: Session = Depends(ge
 
 @router.post("/test-send", response_model=Message)
 def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), db: Session = Depends(get_db)):
-    """Send one rendered test email. Recipients are limited by ``sending.test_recipients`` (ALLOWED_TEST_RECIPIENTS
-    for real mailboxes; app users too for sandbox mailboxes)."""
+    """Send one rendered test email. Any address with REAL_SENDING=enabled; otherwise limited by
+    ``sending.test_recipients`` (ALLOWED_TEST_RECIPIENTS for real mailboxes; app users too for sandbox mailboxes)."""
     try:
         to = normalize_email(body.to_email)
     except InvalidEmail as exc:
@@ -651,7 +651,7 @@ def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), 
     mailbox = db.get(EmailAccount, body.email_account_id)
     if mailbox is None or mailbox.status != "connected":
         raise HTTPException(409, "Choose a connected email account")
-    if to not in sending.test_recipients(db, mailbox):
+    if not sending.may_test_send(db, mailbox, to):
         raise HTTPException(403, sending.TEST_RECIPIENT_ERROR)
     vars_, campaign, _who = _preview_vars(db, body)
     asset = _chosen_video(db, body)

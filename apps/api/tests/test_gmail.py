@@ -292,6 +292,21 @@ def test_test_only_mode_allows_one_allowlisted_test_email(client, google, db, mo
     assert len(google.sent) == 1
 
 
+def test_enabled_mode_test_emails_go_to_any_address(client, google, db, monkeypatch, compliance):
+    connect(client)
+    monkeypatch.setattr(get_settings(), "real_sending", "enabled")
+    monkeypatch.setattr(get_settings(), "allowed_test_recipients", "")
+    mid = str(db.scalar(select(EmailAccount.id)))
+    body = {"subject": "Hi {{first_name}}", "body": "Hello", "email_account_id": mid}
+    r = client.post("/api/campaigns/test-send", json={**body, "to_email": "Stranger@gmail.com"})
+    assert r.status_code == 200, r.text
+    assert google.sent_mime()["To"] == "stranger@gmail.com"
+    assert client.get(f"/api/email-accounts/{mid}/test-recipients").json()["unrestricted"] is True
+    r = client.post(f"/api/email-accounts/{mid}/test-email", json={"to_email": "someone@example.org"})
+    assert r.status_code == 200, r.text
+    assert len(google.sent) == 2
+
+
 def test_mailbox_test_email_only_to_allowlist_in_test_only_mode(client, app, google, db, monkeypatch):
     connect(client)
     s = get_settings()
@@ -299,7 +314,8 @@ def test_mailbox_test_email_only_to_allowlist_in_test_only_mode(client, app, goo
     monkeypatch.setattr(s, "allowed_test_recipients", "qa@tracestudio.dev, ops@tracestudio.dev")
     mid = str(db.scalar(select(EmailAccount.id)))
     r = client.get(f"/api/email-accounts/{mid}/test-recipients").json()
-    assert r == {"recipients": ["ops@tracestudio.dev", "qa@tracestudio.dev"], "real_sending": "test_only"}
+    assert r == {"recipients": ["ops@tracestudio.dev", "qa@tracestudio.dev"], "real_sending": "test_only",
+                 "unrestricted": False}
 
     url = f"/api/email-accounts/{mid}/test-email"
     assert client.post(url, json={"to_email": "stranger@gmail.com"}).status_code == 403

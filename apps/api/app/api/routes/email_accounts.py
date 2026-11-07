@@ -394,7 +394,8 @@ def sync_now(account_id: uuid.UUID, _: User = Depends(admin), db: Session = Depe
 @router.get("/{account_id}/test-recipients")
 def test_recipients(account_id: uuid.UUID, _: User = Depends(admin), db: Session = Depends(get_db)):
     a = _get(db, account_id)
-    return {"recipients": sorted(sending.test_recipients(db, a)), "real_sending": get_settings().real_sending}
+    return {"recipients": sorted(sending.test_recipients(db, a)), "real_sending": get_settings().real_sending,
+            "unrestricted": sending.test_recipients_unrestricted(a)}
 
 
 @router.post("/{account_id}/test-email", response_model=Message)
@@ -409,7 +410,7 @@ def send_test_email(account_id: uuid.UUID, body: TestEmailIn, request: Request, 
         to = normalize_email(body.to_email)
     except InvalidEmail as exc:
         raise HTTPException(422, str(exc)) from exc
-    if to not in sending.test_recipients(db, a):
+    if not sending.may_test_send(db, a, to):
         raise HTTPException(403, sending.TEST_RECIPIENT_ERROR)
     # the recipient sees only the mailbox; the signed-in user is recorded in the audit log, not in the message
     text = (f"This is a test email from Trace CRM, sent from {a.email}.\n\n"

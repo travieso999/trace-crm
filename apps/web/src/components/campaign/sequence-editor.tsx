@@ -322,7 +322,7 @@ function TestSendDialog({ step, campaignId, onOpenChange }: { step: Step | null;
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Send a test</DialogTitle>
-          <DialogDescription>Rendered with the first enrolled prospect’s data (or a sample prospect). Only addresses in ALLOWED_TEST_RECIPIENTS can receive tests (sandbox mailboxes also accept app users).</DialogDescription>
+          <DialogDescription>Rendered with the first enrolled prospect’s data (or a sample prospect). When real sending is on, a test can go to any address.</DialogDescription>
         </DialogHeader>
         {step?.video_attach && (
           <p className="rounded-md bg-muted px-2 py-1.5 text-xs text-muted-foreground">

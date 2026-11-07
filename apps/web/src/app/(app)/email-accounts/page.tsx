@@ -454,17 +454,18 @@ function SettingsDialog({ account, onOpenChange }: { account: EmailAccount | nul
   );
 }
 
-/** One fixed test email to an allow-listed address. The server enforces the allowlist and REAL_SENDING again. */
+/** One fixed test email to any address (REAL_SENDING=enabled) or an allow-listed one. The server enforces the allowlist and REAL_SENDING again. */
 function TestEmailDialog({ account, onOpenChange }: { account: EmailAccount | null; onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
   const [to, setTo] = React.useState("");
   const allowed = useQuery({
     queryKey: ["test-recipients", account?.id],
-    queryFn: () => api<{ recipients: string[]; real_sending: MailProviders["real_sending"] }>(`/api/email-accounts/${account!.id}/test-recipients`),
+    queryFn: () => api<{ recipients: string[]; real_sending: MailProviders["real_sending"]; unrestricted?: boolean }>(`/api/email-accounts/${account!.id}/test-recipients`),
     enabled: !!account,
   });
   const recipients = allowed.data?.recipients ?? [];
-  const chosen = recipients.includes(to) ? to : (recipients[0] ?? "");
+  const unrestricted = !!allowed.data?.unrestricted;
+  const chosen = unrestricted ? to.trim() : recipients.includes(to) ? to : (recipients[0] ?? "");
   const blocked = account?.provider !== "sandbox" && allowed.data?.real_sending === "disabled";
   const send = useMutation({
     mutationFn: () => api<{ message: string }>(`/api/email-accounts/${account!.id}/test-email`, { body: { to_email: chosen } }),
@@ -496,7 +497,11 @@ function TestEmailDialog({ account, onOpenChange }: { account: EmailAccount | nu
               send.mutate();
             }}
           >
-            {recipients.length === 0 ? (
+            {unrestricted ? (
+              <Field label="Send to" htmlFor="test-to" hint="Real sending is on: any address can receive a test email.">
+                <Input id="test-to" type="email" placeholder="name@example.com" value={to} onChange={(e) => setTo(e.target.value)} />
+              </Field>
+            ) : recipients.length === 0 ? (
               <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
                 No allowed test recipients. Add your own address to ALLOWED_TEST_RECIPIENTS in the server .env and restart
                 the API.

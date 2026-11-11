@@ -92,6 +92,29 @@ export const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
 
 export const NAV = NAV_GROUPS.flatMap((g) => g.items);
 
+/** Sections that need a permission (an admin switches them on per person in Team Management). */
+const SECTION_PERMISSION: Record<string, string> = { Outreach: "outreach.access", "Insights & tools": "insights.access" };
+
+/** The permission a page needs, or null. */
+function requiredPermission(pathname: string): string | null {
+  for (const g of NAV_GROUPS) {
+    const perm = g.label ? SECTION_PERMISSION[g.label] : undefined;
+    if (perm && g.items.some((i) => pathname === i.href || pathname.startsWith(i.href + "/"))) return perm;
+  }
+  return null;
+}
+
+function useSectionAccess() {
+  const me = useMe();
+  const perms = me.data?.user.permissions ?? [];
+  return {
+    outreach: perms.includes("outreach.access"),
+    inbox: perms.includes("outreach.access") && perms.includes("inbox.access"),
+    allows: (label: string | null) => !label || !SECTION_PERMISSION[label] || perms.includes(SECTION_PERMISSION[label]),
+    perms,
+  };
+}
+
 type Me = { user: User; csrf_token: string };
 
 export function useMe() {
@@ -104,7 +127,8 @@ function isActive(pathname: string, href: string) {
 
 function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
-  const inbox = useCan("inbox.access");
+  const access = useSectionAccess();
+  const inbox = access.inbox;
   const unread = useQuery({
     queryKey: ["inbox-unread"],
     queryFn: () => api<{ unread: number }>("/api/inbox/unread-count"),
@@ -113,7 +137,7 @@ function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
   }).data?.unread;
   return (
     <nav aria-label="Main" className="flex flex-col px-2.5">
-      {NAV_GROUPS.map((group, gi) => (
+      {NAV_GROUPS.filter((g) => access.allows(g.label)).map((group, gi) => (
         <div key={group.label ?? "top"} role="group" aria-label={group.label ?? undefined} className={cn("flex flex-col gap-1", gi > 0 && "mt-5")}>
           {group.label && (collapsed ? (
             <div className="mx-2 mb-1 h-px bg-sidebar-border" aria-hidden />
@@ -244,7 +268,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const qc = useQueryClient();
   const collapsed = React.useSyncExternalStore(subscribeCollapsed, readCollapsed, () => false);
-  const fullWidth = usePathname().startsWith("/opportunities");
+  const pathname = usePathname();
+  const fullWidth = pathname.startsWith("/opportunities");
+  const needed = requiredPermission(pathname);
   const [mobileOpen, setMobileOpen] = React.useState(false);
 
   const toggle = React.useCallback(() => writeCollapsed(!readCollapsed()), []);
@@ -378,7 +404,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <NotificationBell />
         </header>
         <main id="main" className={cn("mx-auto w-full flex-1 px-4 py-6 md:px-6 lg:px-8", !fullWidth && "max-w-[1400px]")}>
-          {children}
+          {needed && !user.permissions?.includes(needed) ? (
+            <div className="mx-auto mt-16 flex max-w-md flex-col items-center rounded-xl border border-dashed px-6 py-14 text-center">
+              <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-muted">
+                <ShieldBan className="size-5 text-muted-foreground" aria-hidden />
+              </div>
+              <h1 className="text-sm font-medium">You don’t have access to this section</h1>
+              <p className="mt-1 text-sm text-muted-foreground">Ask an administrator to switch it on for you in Team Management.</p>
+              <Link href="/opportunities" className="mt-4 text-sm font-medium text-signal hover:underline">Go to Opportunities</Link>
+            </div>
+          ) : (
+            children
+          )}
         </main>
       </div>
     </div>

@@ -18,6 +18,7 @@ from app.models import (
     ScheduledMessage,
     SentMessage,
     SuppressionEntry,
+    User,
 )
 from app.models.base import utcnow
 from app.services import sending
@@ -318,6 +319,11 @@ def test_permissions(app, db, outbox, compliance):
     member = login(app, "member@trace.studio")
     assert viewer.get("/api/campaigns").status_code == 200
     assert viewer.post("/api/campaigns", json={"name": "x"}).status_code == 403
+    # team members need Outreach switched on by an admin (off by default)
+    assert member.post("/api/campaigns", json={"name": "x"}).status_code == 403
+    member_row = db.scalar(select(User).where(User.email == "member@trace.studio"))
+    member_row.permission_overrides = {"outreach.access": True}
+    db.commit()
     assert member.post("/api/campaigns", json={"name": "x"}).status_code == 201
     assert member.post("/api/email-accounts/sandbox", json={"email": "x@trace.studio"}).status_code == 403
     assert viewer.post("/api/suppressions", json={"emails": ["a@b.com"]}).status_code == 403

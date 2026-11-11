@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import audit, reader, writer
+from app.api.deps import audit, reader, require_perm, writer
 from app.api.routes.imports import _get as get_import_list
 from app.core.config import get_settings
 from app.core.db import get_db
@@ -55,8 +55,8 @@ from app.services.rendering import (
     variables_in,
 )
 
-router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
-templates_router = APIRouter(prefix="/api/templates", tags=["templates"])
+router = APIRouter(prefix="/api/campaigns", tags=["campaigns"], dependencies=[Depends(require_perm("outreach.access"))])
+templates_router = APIRouter(prefix="/api/templates", tags=["templates"], dependencies=[Depends(require_perm("outreach.access"))])
 
 SAMPLE_CONTACT = {
     "first_name": "Alex", "last_name": "Rivera", "full_name": "Alex Rivera", "email": "alex@example.com",

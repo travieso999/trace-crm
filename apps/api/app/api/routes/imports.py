@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import audit, reader, writer
+from app.api.deps import audit, reader, require_perm, writer
 from app.core.db import get_db
 from app.models import Contact, ImportBatch, User
 from app.models.base import utcnow
@@ -17,7 +17,7 @@ from app.services import import_lists
 from app.services.audience import AudienceFilter, contacts_query
 from app.services.csv_import import export_contacts_csv
 
-router = APIRouter(prefix="/api/imports", tags=["imported lists"])
+router = APIRouter(prefix="/api/imports", tags=["imported lists"], dependencies=[Depends(require_perm("outreach.access"))])
 
 
 class RenameIn(BaseModel):

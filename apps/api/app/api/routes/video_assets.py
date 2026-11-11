@@ -9,13 +9,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import audit, reader, writer
+from app.api.deps import audit, reader, require_perm, writer
 from app.core.db import get_db
 from app.models import Campaign, EmailImage, User, VideoAsset
 from app.schemas.common import Message, ORMModel
 from app.services import video_assets as svc
 
-router = APIRouter(prefix="/api/video-assets", tags=["video"])
+router = APIRouter(prefix="/api/video-assets", tags=["video"], dependencies=[Depends(require_perm("outreach.access"))])
 # under /u/ like unsubscribe links: public, and already routed to the API by the website
 public_router = APIRouter(prefix="/u/thumb", tags=["video"], include_in_schema=False)
 

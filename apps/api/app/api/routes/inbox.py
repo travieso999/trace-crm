@@ -19,7 +19,8 @@ from app.services.contacts import log_activity
 from app.services.inbound import latest_text
 from app.services.rendering import signature_image_html, text_to_html
 
-router = APIRouter(prefix="/api/inbox", tags=["inbox"], dependencies=[Depends(require_perm("inbox.access"))])
+router = APIRouter(prefix="/api/inbox", tags=["inbox"],
+                   dependencies=[Depends(require_perm("outreach.access")), Depends(require_perm("inbox.access"))])
 
 INTENTS = ("positive", "neutral", "negative", "meeting", "not_now", "wrong_person")
 

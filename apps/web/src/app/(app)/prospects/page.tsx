@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog, EmptyState, ErrorState, NativeSelect, PageHeader, Pagination, StatusBadge } from "@/components/common";
 import { LeadForm, toPayload } from "@/components/lead-form";
 import { EnrollDialog } from "@/components/enroll-dialog";
-import { useCanWrite } from "@/components/app-shell";
+import { useCan, useCanWrite } from "@/components/app-shell";
 import { api, download, errorMessage } from "@/lib/api";
 import { fullName, humanize, num, relTime } from "@/lib/format";
 import { LEAD_STATUSES, type Contact, type Page, type Tag, type ImportList } from "@/lib/types";
@@ -58,6 +58,7 @@ function BulkBar({ ids, tags, onDone }: { ids: string[]; tags: Tag[]; onDone: ()
   const qc = useQueryClient();
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [enrolling, setEnrolling] = React.useState(false);
+  const outreach = useCan("outreach.access");
   const bulk = useMutation({
     mutationFn: (body: { action: string; value?: string }) => api<{ updated: number }>("/api/contacts/bulk", { body: { ids, ...body } }),
     onSuccess: (r, vars) => {
@@ -106,10 +107,10 @@ function BulkBar({ ids, tags, onDone }: { ids: string[]; tags: Tag[]; onDone: ()
           </option>
         ))}
       </NativeSelect>
-      <Button variant="outline" size="sm" disabled={bulk.isPending} onClick={() => setEnrolling(true)}>
+      {outreach && <Button variant="outline" size="sm" disabled={bulk.isPending} onClick={() => setEnrolling(true)}>
         <Send /> Add to campaign…
-      </Button>
-      <EnrollDialog contactIds={ids} open={enrolling} onOpenChange={setEnrolling} onDone={onDone} />
+      </Button>}
+      {outreach && <EnrollDialog contactIds={ids} open={enrolling} onOpenChange={setEnrolling} onDone={onDone} />}
       <form onSubmit={addTag} className="flex items-center gap-1">
         <Input
           aria-label="Tag to add"
@@ -168,7 +169,10 @@ function ProspectsList() {
   const [filters, setFilters] = React.useState<Filters>({ ...NO_FILTERS, batch_id: params.get("batch_id") ?? "" });
   const [place, setPlace] = React.useState({ state: "", city: "", industry: "" });
   const placeQ = useDebounced(JSON.stringify(place));
-  const lists = useQuery({ queryKey: ["import-lists"], queryFn: () => api<ImportList[]>("/api/imports") });
+  const outreach = useCan("outreach.access");
+  const canExport = useCan("prospects.export");
+  // imported lists belong to Outreach: only load them for people who can see that section
+  const lists = useQuery({ queryKey: ["import-lists"], queryFn: () => api<ImportList[]>("/api/imports"), enabled: outreach });
   const [sort, setSort] = React.useState<Sort>({ key: "created_at", order: "desc" });
   const [page, setPage] = React.useState(1);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
@@ -234,9 +238,11 @@ function ProspectsList() {
           <>
             {canWrite && (
               <>
-                <Button variant="outline" onClick={exportCsv}>
-                  <Download /> Export
-                </Button>
+                {canExport && (
+                  <Button variant="outline" onClick={exportCsv}>
+                    <Download /> Export
+                  </Button>
+                )}
                 <Link href="/prospects/import" className={cn(buttonVariants({ variant: "outline" }))}>
                   <Upload /> Import CSV
                 </Link>

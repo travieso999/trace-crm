@@ -23,7 +23,10 @@ PERMISSIONS: dict[str, tuple[str, str]] = {
     "opportunities.reassign": ("Assign to anyone", "Assign or reassign any opportunity to any teammate, including bulk."),
     "opportunities.delete_any": ("Remove any opportunity",
                                  "Remove opportunities owned by others from the board (their own can always be removed)."),
-    "inbox.access": ("Unified Inbox", "Read and reply to campaign replies in the Unified Inbox."),
+    "outreach.access": ("Outreach", "Campaigns, sequences and templates, imported lists, the Unified Inbox and email accounts: "
+                                    "create, launch and view. When off, the Outreach section is hidden and refused."),
+    "inbox.access": ("Unified Inbox", "Read and reply to campaign replies (also needs Outreach)."),
+    "insights.access": ("Insights & tools", "Analytics, AI Personalization and Website Audits."),
     "prospects.export": ("Export prospects", "Download the prospect list as a CSV file."),
     "users.manage": ("Manage team", "Create, edit, deactivate and delete user accounts."),
     "settings.manage": ("Manage settings", "Change workspace settings, pipeline stages, mailboxes and suppressions."),
@@ -35,7 +38,9 @@ ADJUSTABLE = (
     "opportunities.assign_self",
     "opportunities.reassign",
     "opportunities.delete_any",
+    "outreach.access",
     "inbox.access",
+    "insights.access",
     "prospects.export",
 )
 
@@ -44,13 +49,16 @@ ROLE_DEFAULTS: dict[str, frozenset[str]] = {
     "member": frozenset({
         "opportunities.view", "opportunities.create", "opportunities.edit_own", "opportunities.edit_others",
         "opportunities.assign_self", "inbox.access", "prospects.export",
+        # not "outreach.access" / "insights.access": off for team members unless an admin switches them on
     }),
-    "viewer": frozenset({"opportunities.view", "inbox.access"}),  # read-only: writes still need a member role
+    # read-only (writes still need a member role); keeps the read access viewers always had
+    "viewer": frozenset({"opportunities.view", "inbox.access", "outreach.access", "insights.access"}),
 }
 
 ROLE_INFO: dict[str, tuple[str, str]] = {
     "admin": ("Administrator", "Full access: team, settings, mailboxes and every opportunity."),
-    "member": ("Team member", "Works opportunities, prospects and campaigns. Cannot manage the team or settings."),
+    "member": ("Team member", "Works opportunities and prospects; Outreach and Insights when switched on. "
+                          "Cannot manage the team or settings."),
     "viewer": ("Viewer", "Read-only access."),
 }
 

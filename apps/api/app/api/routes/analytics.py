@@ -4,13 +4,13 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import reader
+from app.api.deps import reader, require_perm
 from app.core.db import get_db
 from app.models import EmailEvent, User
 from app.models.base import utcnow
 from app.services import analytics, app_settings
 
-router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+router = APIRouter(prefix="/api/analytics", tags=["analytics"], dependencies=[Depends(require_perm("insights.access"))])
 
 
 @router.get("")

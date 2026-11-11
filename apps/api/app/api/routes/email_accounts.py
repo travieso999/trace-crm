@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import admin, audit, reader
+from app.api.deps import admin, audit, require_perm
 from app.api.routes.video_assets import read_body
 from app.core.config import get_settings
 from app.core.crypto import CryptoError, encrypt
@@ -99,7 +99,7 @@ def _get(db: Session, account_id: uuid.UUID) -> EmailAccount:
 
 
 @router.get("/providers")
-def providers(_: User = Depends(reader)):
+def providers(_: User = Depends(require_perm("outreach.access"))):
     s = get_settings()
     return {
         "gmail": {"available": s.google_oauth_configured, "configured": s.google_oauth_configured,
@@ -213,7 +213,7 @@ def google_callback(request: Request, code: str | None = None, state: str | None
 
 
 @router.get("", response_model=list[EmailAccountOut])
-def list_accounts(include_disconnected: bool = False, _: User = Depends(reader), db: Session = Depends(get_db)):
+def list_accounts(include_disconnected: bool = False, _: User = Depends(require_perm("outreach.access")), db: Session = Depends(get_db)):
     stmt = select(EmailAccount).order_by(EmailAccount.email)
     if not include_disconnected:
         stmt = stmt.where(EmailAccount.status != "disconnected")
@@ -306,7 +306,7 @@ def connect_smtp(body: SmtpConnectIn, request: Request, user: User = Depends(adm
 
 
 @router.get("/{account_id}", response_model=EmailAccountOut)
-def get_account(account_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
+def get_account(account_id: uuid.UUID, _: User = Depends(require_perm("outreach.access")), db: Session = Depends(get_db)):
     return _out(db, [_get(db, account_id)])[0]
 
 

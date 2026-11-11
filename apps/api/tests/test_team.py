@@ -240,14 +240,38 @@ def test_permission_overrides_validation_and_viewer(app):
     assert {r["key"] for r in cat["roles"]} == {"admin", "member", "viewer"}
     viewer = add_user(admin, "v@trace.studio", "Viewer", role="viewer")
     cv = login(app, "v@trace.studio", PW)
-    assert viewer["permissions"] == ["inbox.access", "opportunities.view"]
+    assert viewer["permissions"] == ["inbox.access", "insights.access", "opportunities.view", "outreach.access"]
     assert cv.post("/api/opportunities", json={"email": "v@client.com"}).status_code == 403
 
 
-def test_inbox_and_export_can_be_switched_off_per_person(app):
+def test_outreach_and_insights_are_off_for_team_members_until_switched_on(app):
     admin, e1, _, c1, c2 = team(app)
+    me = c1.get("/api/auth/me").json()["user"]["permissions"]
+    assert "outreach.access" not in me and "insights.access" not in me
+    refused = ["/api/campaigns", "/api/templates", "/api/imports", "/api/email-accounts", "/api/video-assets",
+               "/api/inbox", "/api/inbox/unread-count", "/api/analytics"]
+    for url in refused:
+        assert c1.get(url).status_code == 403, url
+    assert c1.post("/api/campaigns", json={"name": "Mine"}).status_code == 403
+    # Sales stays available
+    assert c1.get("/api/opportunities").status_code == 200 and c1.get("/api/contacts").status_code == 200
+    # the admin always has both; switching them on for one employee opens the sections for that person only
+    assert admin.get("/api/campaigns").status_code == 200
+    admin.patch(f"/api/auth/users/{e1['id']}", json={"permission_overrides": {"outreach.access": True, "insights.access": True}})
+    for url in ("/api/campaigns", "/api/imports", "/api/email-accounts", "/api/inbox"):
+        assert c1.get(url).status_code == 200, url
+    assert c2.get("/api/campaigns").status_code == 403
+    # the Google OAuth callback is not behind the switch (it validates its own state)
+    assert c2.get("/api/email-accounts/oauth/google/callback").status_code != 403
+
+
+def test_inbox_and_export_can_be_switched_off_per_person(app):
+    admin, e1, e2, c1, c2 = team(app)
+    for e in (e1, e2):
+        admin.patch(f"/api/auth/users/{e['id']}", json={"permission_overrides": {"outreach.access": True}})
     assert c1.get("/api/inbox").status_code == 200 and c1.get("/api/contacts/export").status_code == 200
-    admin.patch(f"/api/auth/users/{e1['id']}", json={"permission_overrides": {"inbox.access": False, "prospects.export": False}})
+    admin.patch(f"/api/auth/users/{e1['id']}", json={"permission_overrides": {"outreach.access": True, "inbox.access": False,
+                                                                           "prospects.export": False}})
     assert c1.get("/api/inbox").status_code == 403 and c1.get("/api/inbox/unread-count").status_code == 403
     assert c1.get("/api/contacts/export").status_code == 403
     assert c2.get("/api/inbox").status_code == 200

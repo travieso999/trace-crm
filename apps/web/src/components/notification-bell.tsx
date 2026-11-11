@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, Bell, BellRing, CheckCheck, Circle, CircleCheck, X } from "lucide-react";
+import { AlarmClock, Bell, BellRing, CheckCheck, Circle, CircleCheck, MailWarning, ShieldAlert, UserRoundCheck, X } from "lucide-react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -13,6 +13,17 @@ import { api, errorMessage } from "@/lib/api";
 import { relTime } from "@/lib/format";
 import type { AppNotification } from "@/lib/types";
 import { dueLabel } from "@/components/opportunities/shared";
+
+/** Where a notification leads. */
+function linkFor(n: AppNotification): string | null {
+  if (n.kind === "security") return "/settings#security";
+  if (n.kind === "mailbox") return "/email-accounts";
+  if (n.kind === "assignment") return n.contact_id ? `/opportunities?open=${n.contact_id}` : "/opportunities?owner=me&view=table";
+  return n.contact_id ? `/opportunities?open=${n.contact_id}&tab=tasks` : null;
+}
+
+/** Kinds whose detail is a sentence in `body` (task reminders show the prospect and task type instead). */
+const hasBody = (n: AppNotification) => n.kind === "security" || n.kind === "mailbox" || n.kind === "assignment";
 
 type Filter = "all" | "unread" | "overdue";
 const FILTERS: [Filter, string][] = [["all", "All"], ["unread", "Unread"], ["overdue", "Overdue"]];
@@ -49,10 +60,12 @@ function useDesktopAlerts(latestAt: string | null | undefined, open: (path: stri
     write(SEEN_KEY, latestAt);
     api<{ items: AppNotification[] }>("/api/notifications", { query: { filter: "unread", limit: 5 } }).then((r) => {
       for (const n of r.items.filter((x) => x.created_at > seen).reverse()) {
-        const alert = new Notification(n.title, { body: [n.contact_name, n.task_type].filter(Boolean).join(" · "), tag: n.id });
+        const body = hasBody(n) ? n.body ?? "" : [n.contact_name, n.task_type].filter(Boolean).join(" · ");
+        const alert = new Notification(n.title, { body, tag: n.id });
         alert.onclick = () => {
           window.focus();
-          if (n.contact_id) open(`/opportunities?open=${n.contact_id}&tab=tasks`);
+          const to = linkFor(n);
+          if (to) open(to);
         };
       }
     }).catch(() => {});
@@ -90,15 +103,20 @@ function Item({ n, onOpen }: { n: AppNotification; onOpen: (n: AppNotification) 
     onSuccess: refresh,
     onError: (e) => toast.error(errorMessage(e)),
   });
-  const overdue = n.task_status === "overdue";
+  const security = n.kind === "security";
+  const alert = security || n.kind === "mailbox";
+  const overdue = !hasBody(n) && n.task_status === "overdue";
+  const Icon = security ? ShieldAlert : n.kind === "mailbox" ? MailWarning : n.kind === "assignment" ? UserRoundCheck
+    : overdue ? AlarmClock : BellRing;
   return (
     <li className={cn("group relative flex gap-3 border-b px-3 py-3 transition-colors last:border-b-0 hover:bg-muted/50", !n.read && "bg-primary/[0.04]")}>
-      <span className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full", overdue ? "bg-destructive/15 text-destructive" : "bg-primary/15 text-signal")}>
-        {overdue ? <AlarmClock className="size-3.5" aria-hidden /> : <BellRing className="size-3.5" aria-hidden />}
+      <span className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full", overdue || alert ? "bg-destructive/15 text-destructive" : "bg-primary/15 text-signal")}>
+        <Icon className="size-3.5" aria-hidden />
       </span>
       <button type="button" onClick={() => onOpen(n)} className="grid min-w-0 flex-1 gap-0.5 text-left outline-none focus-visible:underline">
         <span className={cn("truncate text-sm", !n.read && "font-semibold")}>{n.title}</span>
-        <span className="truncate text-xs text-muted-foreground">{[n.contact_name, n.task_type].filter(Boolean).join(" · ")}</span>
+        {hasBody(n) ? <span className="line-clamp-3 text-xs text-muted-foreground">{n.body}</span>
+          : <span className="truncate text-xs text-muted-foreground">{[n.contact_name, n.task_type].filter(Boolean).join(" · ")}</span>}
         <span className={cn("text-xs", overdue ? "text-destructive" : "text-muted-foreground")}>
           {n.due_at ? `${overdue ? "Overdue · " : "Due "}${dueLabel({ id: "", title: "", task_type: "", overdue, due_at: n.due_at, timezone: n.timezone })}` : ""}
           {n.task_status === "completed" && " · done"}
@@ -152,7 +170,8 @@ export function NotificationBell() {
     if (!n.read) api(`/api/notifications/${n.id}/read`, { method: "POST", body: { read: true } })
       .then(() => qc.invalidateQueries({ queryKey: ["notifications-count"] })).catch(() => {});
     setOpen(false);
-    if (n.contact_id) router.push(`/opportunities?open=${n.contact_id}&tab=tasks`, { scroll: false });
+    const to = linkFor(n);
+    if (to) router.push(to, { scroll: false });
   };
   const unread = count.data?.unread ?? 0;
   const items = list.data?.items ?? [];

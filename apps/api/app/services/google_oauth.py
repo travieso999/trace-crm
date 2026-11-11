@@ -186,7 +186,9 @@ def _refresh(refresh_token: str) -> dict:
 
 
 def _mark_auth_error(db, account: EmailAccount, message: str) -> None:
-    account.status, account.last_error, account.last_error_at = "auth_error", message[:2000], utcnow()
+    from app.services.mailbox_alerts import mark_auth_error
+
+    mark_auth_error(db, account, message)
     db.commit()
 
 

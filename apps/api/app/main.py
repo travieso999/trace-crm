@@ -41,9 +41,13 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def request_context(request: Request, call_next):
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
-        if request.url.path.startswith("/api/") and request.url.path != "/api/health":
-            key = request.cookies.get(settings.session_cookie_name, "")[:16] or (client_ip(request) or "anon")
-            if not ratelimit.hit(f"api:{key}", settings.api_rate_limit_per_minute):
+        path = request.url.path
+        if (path.startswith("/api/") and path != "/api/health") or path.startswith("/u/"):
+            ip = client_ip(request) or "anon"
+            cookie = request.cookies.get(settings.session_cookie_name, "")[:16]
+            # per session, and per IP as a backstop: a made-up cookie must not buy a fresh allowance
+            if (cookie and not ratelimit.hit(f"api:{cookie}", settings.api_rate_limit_per_minute)) or not ratelimit.hit(
+                    f"api-ip:{ip}", settings.api_rate_limit_per_minute * 3):
                 return JSONResponse({"detail": "Rate limit exceeded"}, status_code=429)
         response = await call_next(request)
         for k, v in SECURITY_HEADERS.items():

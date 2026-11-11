@@ -267,8 +267,10 @@ def test_outreach_and_insights_are_off_for_team_members_until_switched_on(app):
 
 def test_inbox_and_export_can_be_switched_off_per_person(app):
     admin, e1, e2, c1, c2 = team(app)
+    assert c1.get("/api/contacts/export").status_code == 403  # off for team members by default
     for e in (e1, e2):
-        admin.patch(f"/api/auth/users/{e['id']}", json={"permission_overrides": {"outreach.access": True}})
+        admin.patch(f"/api/auth/users/{e['id']}", json={"permission_overrides": {"outreach.access": True,
+                                                                               "prospects.export": True}})
     assert c1.get("/api/inbox").status_code == 200 and c1.get("/api/contacts/export").status_code == 200
     admin.patch(f"/api/auth/users/{e1['id']}", json={"permission_overrides": {"outreach.access": True, "inbox.access": False,
                                                                            "prospects.export": False}})
@@ -358,3 +360,39 @@ def test_migration_keeps_existing_owners_and_backfills_history(app):
     finally:
         command.upgrade(cfg, "head")
         engine.dispose()
+
+
+# --- assignment notifications ----------------------------------------------------------------------
+
+def bell(client, kind="assignment"):
+    return [n for n in client.get("/api/notifications").json()["items"] if n["kind"] == kind]
+
+
+def test_new_owner_is_notified_once_and_never_about_their_own_work(app):
+    admin, e1, e2, c1, c2 = team(app)
+    a = opp(admin, "a@client.com", company_name="ABC Bail Bonds", owner_id=e1["id"])["id"]
+    n = bell(c1)
+    assert len(n) == 1 and n[0]["title"] == "Travis assigned you A (ABC Bail Bonds)" and n[0]["contact_id"] == a
+    assert bell(admin) == []
+    # taking an unassigned one yourself: no notification
+    free = opp(admin, "free@client.com", owner_id=None)["id"]
+    c2.patch(f"/api/opportunities/{free}", json={"owner_id": e2["id"]})
+    assert bell(c2) == []
+    # reassigning notifies the new owner only
+    admin.patch(f"/api/opportunities/{a}", json={"owner_id": e2["id"]})
+    assert len(bell(c2)) == 1 and len(bell(c1)) == 1
+    # unassigning notifies nobody
+    admin.patch(f"/api/opportunities/{a}", json={"owner_id": None})
+    assert len(bell(c2)) == 1
+
+
+def test_bulk_and_handover_send_one_summary(app):
+    admin, e1, e2, c1, c2 = team(app)
+    rows = [opp(admin, f"p{i}@client.com", owner_id=None)["id"] for i in range(7)]
+    admin.post("/api/opportunities/bulk-assign", json={"ids": rows, "owner_id": e1["id"]})
+    n = bell(c1)
+    assert len(n) == 1 and n[0]["title"] == "Travis assigned you 7 opportunities" and n[0]["contact_id"] is None
+    assert n[0]["body"].endswith("and 2 more")
+    # deleting Employee One hands their 7 to Employee Two in one notification
+    admin.delete(f"/api/auth/users/{e1['id']}", params={"reassign_to": e2["id"]})
+    assert [x["title"] for x in bell(c2)] == ["Travis assigned you 7 opportunities"]

@@ -14,6 +14,7 @@ export type User = {
   permission_overrides: Record<string, boolean>;
   created_at: string | null;
   password_changed_at: string | null;
+  mfa_enabled: boolean;
 };
 
 /** A teammate as every signed-in user sees them (for owner pickers and filters). */
@@ -651,7 +652,7 @@ export type ActivityItem = { id: string; type: string; summary: string; at: stri
 
 export type AppNotification = {
   id: string;
-  kind: "task_reminder" | "task_overdue";
+  kind: "task_reminder" | "task_overdue" | "security" | "mailbox" | "assignment";
   title: string;
   body: string | null;
   contact_id: string | null;

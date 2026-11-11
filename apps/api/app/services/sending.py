@@ -45,7 +45,7 @@ from app.providers.base import (
     SendResult,
 )
 from app.providers.mime import new_message_id
-from app.services import app_settings, video_assets
+from app.services import app_settings, mailbox_alerts, video_assets
 from app.services import campaigns as campaign_service
 from app.services.contacts import is_suppressed, log_activity, set_lead_status, template_variables
 from app.services.rendering import MissingVariables, Rendered, render_email, render_string, signature_to_text, uses_signature
@@ -433,7 +433,10 @@ def _mailbox_failure(r: _Reserved, status: str, error: str, *, requeue: bool) ->
         sm = db.scalar(select(ScheduledMessage).where(ScheduledMessage.id == r.sm_id).with_for_update())
         mailbox = db.scalar(select(EmailAccount).where(EmailAccount.id == r.mailbox_id).with_for_update())
         now = utcnow()
-        mailbox.status, mailbox.last_error, mailbox.last_error_at = status, error[:2000], now
+        if status == "auth_error":
+            mailbox_alerts.mark_auth_error(db, mailbox, error)
+        else:
+            mailbox.status, mailbox.last_error, mailbox.last_error_at = status, error[:2000], now
         if requeue:
             sm.status, sm.last_error, sm.due_at = "queued", error[:2000], now + timedelta(minutes=15)
             sm.attempts = max(0, sm.attempts - 1)

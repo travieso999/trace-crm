@@ -221,6 +221,8 @@ def test_refresh_persists_and_revocation_marks_auth_error(client, google, db):
     db.expire_all()
     acct = db.get(EmailAccount, acct.id)
     assert acct.status == "auth_error" and "reconnect" in acct.last_error
+    alerts = [n for n in client.get("/api/notifications").json()["items"] if n["kind"] == "mailbox"]
+    assert len(alerts) == 1 and acct.email in alerts[0]["title"]
     # reconnect restores it
     google.refresh_ok = True
     location, _ = connect(client, reconnect=str(acct.id))

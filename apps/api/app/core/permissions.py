@@ -48,8 +48,9 @@ ROLE_DEFAULTS: dict[str, frozenset[str]] = {
     "admin": frozenset(PERMISSIONS),
     "member": frozenset({
         "opportunities.view", "opportunities.create", "opportunities.edit_own", "opportunities.edit_others",
-        "opportunities.assign_self", "inbox.access", "prospects.export",
-        # not "outreach.access" / "insights.access": off for team members unless an admin switches them on
+        "opportunities.assign_self", "inbox.access",
+        # not "outreach.access", "insights.access" or "prospects.export": off for team members until an admin
+        # switches them on for that person
     }),
     # read-only (writes still need a member role); keeps the read access viewers always had
     "viewer": frozenset({"opportunities.view", "inbox.access", "outreach.access", "insights.access"}),

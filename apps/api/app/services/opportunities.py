@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Session
 
 from app.core import permissions
-from app.models import Company, Contact, CrmActivity, CrmNote, CrmOpportunity, CrmTask, PipelineStage, User
+from app.models import Company, Contact, CrmActivity, CrmNote, CrmOpportunity, CrmTask, Notification, PipelineStage, User
 from app.models.base import utcnow
 from app.models.crm import LEAD_STATUSES
 from app.services import campaigns as campaign_service
@@ -292,8 +292,33 @@ def resolve_owner(db: Session, owner_id: uuid.UUID | None) -> User | None:
     return u
 
 
-def assign(db: Session, contact: Contact, owner: User | None, actor: User | None, reason: str | None = None) -> bool:
-    """Set Assigned To. Logs the change (who, from, to, when) on the opportunity's history. Returns whether it changed."""
+def deal_label(c: Contact) -> str:
+    name = " ".join(x for x in (c.first_name, c.last_name) if x)
+    if name and c.company_name:
+        return f"{name} ({c.company_name})"
+    return name or c.company_name or c.email
+
+
+def notify_assigned(db: Session, owner: User | None, actor: User | None, contacts: list[Contact]) -> None:
+    """Tell the new owner in the bell. Nobody is notified about work they assigned to themselves; several at once
+    (bulk, or a teammate's deals after their account was deleted) become one summary."""
+    if not contacts or owner is None or (actor is not None and owner.id == actor.id) or not owner.is_active:
+        return
+    who = actor.display_name if actor else "Someone"
+    if len(contacts) == 1:
+        c = contacts[0]
+        title, body, contact_id = f"{who} assigned you {deal_label(c)}", "Opportunity assigned to you", c.id
+    else:
+        names = ", ".join(deal_label(c) for c in contacts[:5]) + (f" and {len(contacts) - 5} more" if len(contacts) > 5 else "")
+        title, body, contact_id = f"{who} assigned you {len(contacts)} opportunities", names, None
+    db.add(Notification(user_id=owner.id, kind="assignment", title=title[:300], body=body, contact_id=contact_id,
+                        fire_at=utcnow(), data={"count": len(contacts)}))
+
+
+def assign(db: Session, contact: Contact, owner: User | None, actor: User | None, reason: str | None = None,
+           notify: bool = True) -> bool:
+    """Set Assigned To. Logs the change (who, from, to, when) on the opportunity's history and, with ``notify``, tells
+    the new owner. Returns whether it changed."""
     opp = get_or_create_opportunity(db, contact, actor)
     new_id = owner.id if owner else None
     if opp.owner_id == new_id:
@@ -309,6 +334,8 @@ def assign(db: Session, contact: Contact, owner: User | None, actor: User | None
         summary += f" (was {old_name})"
     log_activity(db, contact.id, "owner_change", summary, actor, from_owner_id=str(old_id) if old_id else None,
                  to_owner_id=str(new_id) if new_id else None, from_owner=old_name, to_owner=new_name, reason=reason)
+    if notify:
+        notify_assigned(db, owner, actor, [contact])
     db.flush()
     return True
 
@@ -318,7 +345,8 @@ def reassign_all(db: Session, from_user: User, to_user: User | None, actor: User
     rows = list(db.execute(select(Contact, CrmOpportunity).join(CrmOpportunity, CrmOpportunity.contact_id == Contact.id)
                            .where(CrmOpportunity.owner_id == from_user.id)))
     for contact, _ in rows:
-        assign(db, contact, to_user, actor, reason="user_deleted")
+        assign(db, contact, to_user, actor, reason="user_deleted", notify=False)
+    notify_assigned(db, to_user, actor, [c for c, _ in rows])
     return len(rows)
 
 

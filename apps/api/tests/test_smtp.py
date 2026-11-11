@@ -206,6 +206,11 @@ def test_changed_password_needs_reconnect_and_reconnect_keeps_settings(client, s
     acct = client.get(f"/api/email-accounts/{mid}").json()
     assert acct["status"] == "auth_error" and "username or password" in acct["last_error"]
     assert client.post(f"/api/email-accounts/{mid}/resume").status_code == 409
+    # the admins are told once, with a link-able kind; failing again doesn't repeat it
+    alerts = [n for n in client.get("/api/notifications").json()["items"] if n["kind"] == "mailbox"]
+    assert len(alerts) == 1 and MAILBOX in alerts[0]["title"] and "reconnect" in alerts[0]["body"]
+    client.post(f"/api/email-accounts/{mid}/sync")
+    assert len([n for n in client.get("/api/notifications").json()["items"] if n["kind"] == "mailbox"]) == 1
 
     r = client.post("/api/email-accounts/smtp", json={"email": MAILBOX, "password": "rotated-Pass-456",
                                                       "preset": "hostinger"})

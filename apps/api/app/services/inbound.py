@@ -33,7 +33,7 @@ from app.models import (
 from app.models.base import utcnow
 from app.providers import get_provider
 from app.providers.base import InboundRaw, ProviderAuthError, ProviderError
-from app.services import app_settings
+from app.services import app_settings, mailbox_alerts
 from app.services import campaigns as campaign_service
 from app.services.contacts import log_activity, set_lead_status
 from app.services.sending import get_or_create_conversation
@@ -332,7 +332,7 @@ def sync_mailbox(account_id: uuid.UUID) -> dict:
         except ProviderError as exc:
             account.last_error, account.last_error_at = str(exc)[:2000], utcnow()
             if isinstance(exc, ProviderAuthError):  # e.g. the mailbox password changed: needs a reconnect
-                account.status = "auth_error"
+                mailbox_alerts.mark_auth_error(db, account, str(exc))
             db.commit()
             return {"processed": 0, "error": str(exc)}
         processed = 0

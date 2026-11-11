@@ -277,7 +277,9 @@ def bulk_assign(body: BulkAssignIn, request: Request, user: User = Depends(requi
     ids = list(dict.fromkeys(body.ids))
     contacts = list(db.scalars(select(Contact).join(CrmOpportunity, CrmOpportunity.contact_id == Contact.id)
                                .where(Contact.id.in_(ids), Contact.deleted_at.is_(None), CrmOpportunity.on_board.is_(True))))
-    changed = sum(svc.assign(db, c, owner, user, reason="bulk") for c in contacts)
+    moved = [c for c in contacts if svc.assign(db, c, owner, user, reason="bulk", notify=False)]
+    changed = len(moved)
+    svc.notify_assigned(db, owner, user, moved)
     for c in contacts:
         c.updated_at = utcnow()
     audit(db, user, "opportunity.bulk_assigned", "contact", None, request, count=len(contacts), changed=changed,

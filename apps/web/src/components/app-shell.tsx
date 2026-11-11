@@ -115,7 +115,7 @@ function useSectionAccess() {
   };
 }
 
-type Me = { user: User; csrf_token: string };
+type Me = { user: User; csrf_token: string; mfa_setup_required: boolean };
 
 export function useMe() {
   return useQuery({ queryKey: ["me"], queryFn: () => api<Me>("/api/auth/me"), staleTime: 60_000, retry: false });
@@ -404,7 +404,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <NotificationBell />
         </header>
         <main id="main" className={cn("mx-auto w-full flex-1 px-4 py-6 md:px-6 lg:px-8", !fullWidth && "max-w-[1400px]")}>
-          {needed && !user.permissions?.includes(needed) ? (
+          {me.data.mfa_setup_required && (
+            <p role="alert" className="mb-4 rounded-md border border-signal/40 bg-signal/10 px-3 py-2 text-sm">
+              Admin features are locked until you turn on two-step verification.{" "}
+              <Link href="/settings#security" className="font-medium text-signal hover:underline">
+                Set it up now
+              </Link>
+            </p>
+          )}
+                    {needed && !user.permissions?.includes(needed) ? (
             <div className="mx-auto mt-16 flex max-w-md flex-col items-center rounded-xl border border-dashed px-6 py-14 text-center">
               <div className="mb-3 flex size-10 items-center justify-center rounded-full bg-muted">
                 <ShieldBan className="size-5 text-muted-foreground" aria-hidden />

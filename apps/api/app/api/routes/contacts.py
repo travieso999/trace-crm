@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.api.deps import audit, reader, require_perm, writer
+from app.core import ratelimit
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import Campaign, CampaignContact, Contact, CrmActivity, Tag, User
@@ -25,7 +26,7 @@ from app.schemas.contacts import (
     CsvPreviewOut,
     TagOut,
 )
-from app.services import audience, import_lists
+from app.services import audience, import_lists, security_alerts
 from app.services import campaigns as campaign_service
 from app.services import notes as note_service
 from app.services.audience import AudienceFilter, contacts_query
@@ -134,8 +135,18 @@ def export_contacts(
     user: User = Depends(require_perm("prospects.export")),  # bulk download of prospect data
     db: Session = Depends(get_db),
 ):
+    """Limited per hour, logged with its filters, and every export alerts the admins."""
+    if not ratelimit.hit(f"export:{user.id}", get_settings().export_limit_per_hour, 3600):
+        audit(db, user, "contacts.export_refused", "contact", None, request, reason="hourly limit")
+        db.commit()
+        raise HTTPException(429, "Export limit reached for this hour")
     contacts = list(db.scalars(contacts_query(f).order_by(Contact.created_at).limit(100_000)))
-    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts), filter=f.to_json())
+    filters = {k: str(v) for k, v in f.to_json().items() if v}
+    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts), filters=filters)
+    security_alerts.notify_admins(db, f"Prospects exported by {user.display_name}",
+                                  f"{user.display_name} downloaded {len(contacts)} prospect(s) as CSV"
+                                  + (f" (filters: {', '.join(f'{k}={v}' for k, v in filters.items())})." if filters
+                                     else " (all prospects)."))
     db.commit()
     return Response(
         export_contacts_csv(contacts),

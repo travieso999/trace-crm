@@ -96,4 +96,4 @@ def _names(db: Session, ids: set) -> dict:
     ids = {i for i in ids if i}
     if not ids:
         return {}
-    return {u.id: (u.full_name or u.email) for u in db.scalars(select(User).where(User.id.in_(ids)))}
+    return {u.id: u.display_name for u in db.scalars(select(User).where(User.id.in_(ids)))}

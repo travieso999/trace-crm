@@ -57,7 +57,7 @@ def load_session(db: Session, token: str | None) -> UserSession | None:
     sess = db.scalar(select(UserSession).where(UserSession.token_hash == hash_token(token)))
     if sess is None or sess.revoked_at is not None or sess.expires_at <= utcnow():
         return None
-    if not sess.user.is_active:
+    if not sess.user.is_active or sess.user.deleted_at is not None:
         return None
     return sess
 

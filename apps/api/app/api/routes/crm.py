@@ -13,6 +13,7 @@ from app.core.db import get_db
 from app.models import Contact, CrmOpportunity, CrmTask, EmailEvent, User
 from app.models.crm import LEAD_STATUSES
 from app.schemas.common import Message
+from app.services import opportunities as opp_service
 from app.services import tasks as task_service
 from app.services.contacts import log_activity, set_lead_status
 
@@ -109,9 +110,11 @@ def put_opportunity(contact_id: uuid.UUID, body: OpportunityIn, request: Request
                     db: Session = Depends(get_db)):
     c = _contact(db, contact_id)
     o = db.scalar(select(CrmOpportunity).where(CrmOpportunity.contact_id == contact_id))
+    if not opp_service.can_edit(user, o):
+        raise HTTPException(403, "This opportunity belongs to a teammate")
     if o is None:
-        o = CrmOpportunity(contact_id=c.id, owner_id=user.id)
-        db.add(o)
+        o = opp_service.get_or_create_opportunity(db, c, user)
+    opp_service.touch(o, user)
     data = body.model_dump(exclude_unset=True)
     new_meeting = "meeting_at" in data and data["meeting_at"] and data["meeting_at"] != o.meeting_at
     for f, v in data.items():

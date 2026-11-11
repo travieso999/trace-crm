@@ -28,6 +28,7 @@ import {
   Sparkles,
   Sun,
   Users,
+  UsersRound,
   FileSpreadsheet,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -103,10 +104,12 @@ function isActive(pathname: string, href: string) {
 
 function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: () => void }) {
   const pathname = usePathname();
+  const inbox = useCan("inbox.access");
   const unread = useQuery({
     queryKey: ["inbox-unread"],
     queryFn: () => api<{ unread: number }>("/api/inbox/unread-count"),
     refetchInterval: 60_000,
+    enabled: inbox,
   }).data?.unread;
   return (
     <nav aria-label="Main" className="flex flex-col px-2.5">
@@ -117,7 +120,7 @@ function NavList({ collapsed, onNavigate }: { collapsed: boolean; onNavigate?: (
           ) : (
             <div className="mb-1 px-3 text-[11px] font-semibold tracking-[0.12em] text-sidebar-foreground/45 uppercase animate-label-in">{group.label}</div>
           ))}
-      {group.items.map(({ href, label, icon: Icon }) => {
+      {group.items.filter((i) => inbox || i.href !== "/inbox").map(({ href, label, icon: Icon }) => {
         const active = isActive(pathname, href);
         const link = (
           <Link
@@ -353,7 +356,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuGroup>
                 <DropdownMenuLabel>
                   <div className="text-sm font-medium text-foreground">{user.email}</div>
-                  <div className="text-xs capitalize">{user.role}</div>
+                  <div className="text-xs">{ROLE_LABEL[user.role] ?? user.role}</div>
                 </DropdownMenuLabel>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
@@ -362,6 +365,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <DropdownMenuItem onClick={() => router.push("/settings")}>
                 <Settings /> Settings
               </DropdownMenuItem>
+              {user.role === "admin" && (
+                <DropdownMenuItem onClick={() => router.push("/settings/team")}>
+                  <UsersRound /> Team Management
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem variant="destructive" onClick={logout}>
                 <LogOut /> Sign out
               </DropdownMenuItem>
@@ -387,3 +395,12 @@ export function useIsAdmin() {
   const me = useMe();
   return me.data?.user.role === "admin";
 }
+
+/** Whether the signed-in user holds a permission (role default plus any per-person adjustment). UI only: the API
+ * enforces the same rules. */
+export function useCan(permission: string) {
+  const me = useMe();
+  return !!me.data?.user.permissions?.includes(permission);
+}
+
+export const ROLE_LABEL: Record<string, string> = { admin: "Administrator", member: "Team member", viewer: "Viewer" };

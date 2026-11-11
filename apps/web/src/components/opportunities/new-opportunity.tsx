@@ -10,6 +10,8 @@ import { Field, NativeSelect, Spinner } from "@/components/common";
 import { api, errorMessage } from "@/lib/api";
 import { fullName } from "@/lib/format";
 import type { OppDetail, Stage } from "@/lib/types";
+import { useCan, useMe } from "@/components/app-shell";
+import { OwnerSelect } from "@/components/team";
 
 const EMPTY = { first_name: "", last_name: "", company_name: "", email: "", phone: "", stage_id: "", value: "" };
 
@@ -22,6 +24,11 @@ export function NewOpportunityDialog({ open, onOpenChange, stages, onCreated }: 
   const qc = useQueryClient();
   const [f, setF] = React.useState(EMPTY);
   const stageId = f.stage_id || stages[0]?.id || "";
+  const meId = useMe().data?.user.id;
+  const assignAny = useCan("opportunities.reassign");
+  // undefined = not touched yet: defaults to the person creating it
+  const [owner, setOwner] = React.useState<string | null | undefined>(undefined);
+  const ownerId = owner === undefined ? (meId ?? null) : owner;
   const create = useMutation({
     mutationFn: () =>
       api<OppDetail & { reused_prospect: boolean }>("/api/opportunities", {
@@ -33,6 +40,7 @@ export function NewOpportunityDialog({ open, onOpenChange, stages, onCreated }: 
           phone: f.phone.trim() || null,
           stage_id: stageId || null,
           value_cents: f.value ? Math.round(Number(f.value) * 100) : null,
+          owner_id: ownerId,
         },
       }),
     onSuccess: (d) => {
@@ -42,6 +50,7 @@ export function NewOpportunityDialog({ open, onOpenChange, stages, onCreated }: 
       qc.invalidateQueries({ queryKey: ["opportunities"] });
       qc.invalidateQueries({ queryKey: ["opportunity-stages"] });
       setF(EMPTY);
+      setOwner(undefined);
       onOpenChange(false);
       onCreated(d.id);
     },
@@ -81,6 +90,9 @@ export function NewOpportunityDialog({ open, onOpenChange, stages, onCreated }: 
               <Input id="no-value" type="number" min={0} step="1" inputMode="decimal" value={f.value} onChange={set("value")} />
             </Field>
           </div>
+          <Field label="Assigned To" htmlFor="no-owner" hint={assignAny ? undefined : "You can assign it to yourself or leave it unassigned."}>
+            <OwnerSelect id="no-owner" className="w-full" value={ownerId} meId={meId} allowed={assignAny ? "any" : "self"} onChange={setOwner} />
+          </Field>
           <div className="flex justify-end gap-2 pt-1">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             <Button type="submit" disabled={create.isPending || !f.email.trim()}>

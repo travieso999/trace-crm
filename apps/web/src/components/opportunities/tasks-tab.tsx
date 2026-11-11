@@ -198,6 +198,11 @@ function TaskRow({ t, types, canWrite, contactId }: { t: OppTask; types: TaskTyp
             </span>
           )}
           {done && t.completed_at && <span>Completed {new Date(t.completed_at).toLocaleString()}</span>}
+          {t.created_by && (
+            <span title={t.created_at ? new Date(t.created_at).toLocaleString() : undefined}>
+              Added by {t.created_by}{t.assignee && t.assignee !== t.created_by ? ` · for ${t.assignee}` : ""}
+            </span>
+          )}
         </div>
         {t.description && <p className="mt-1 text-sm whitespace-pre-wrap text-muted-foreground">{t.description}</p>}
       </div>

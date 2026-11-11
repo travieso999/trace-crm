@@ -18,6 +18,7 @@ import { ActivityTab } from "./activity-tab";
 import { NotesTab } from "./notes-tab";
 import { OverviewTab } from "./overview-tab";
 import { DirtyContext, money } from "./shared";
+import { OwnerChip } from "@/components/team";
 import { TasksTab } from "./tasks-tab";
 
 export const PANEL_TABS = ["overview", "tasks", "notes", "activity"] as const;
@@ -69,6 +70,8 @@ export function OpportunityPanel({ contactId, tab, stages, canWrite, onTab, onCl
     enabled: !!contactId,
   });
   const d = detail.data;
+  // the API says what this person may do with this opportunity (their own, unassigned, or a teammate's)
+  const canEdit = canWrite && (d?.can?.edit ?? false);
   return (
     <SheetPrimitive.Root open={!!contactId} onOpenChange={(o) => { if (!o) requestClose(); }}>
       <SheetPrimitive.Portal>
@@ -99,6 +102,7 @@ export function OpportunityPanel({ contactId, tab, stages, canWrite, onTab, onCl
                       <a href={`mailto:${d.email}`} className="inline-flex items-center gap-1.5 hover:text-foreground"><Mail className="size-3.5" aria-hidden />{d.email}</a>
                       {d.phone && <a href={`tel:${d.phone}`} className="inline-flex items-center gap-1.5 hover:text-foreground"><Phone className="size-3.5" aria-hidden />{d.phone}</a>}
                       {!!d.value_cents && <span className="tabular-nums">{money(d.value_cents)}</span>}
+                      <OwnerChip owner={d.owner} className="text-foreground" />
                     </SheetPrimitive.Description>
                   </>
                 ) : (
@@ -110,7 +114,7 @@ export function OpportunityPanel({ contactId, tab, stages, canWrite, onTab, onCl
                   Prospect record <ExternalLink className="size-3" aria-hidden />
                 </Link>
               )}
-              {d?.on_board && canWrite && (
+              {d?.on_board && canWrite && d.can?.remove && (
                 <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setRemoving(true)}>
                   <SquareMinus /> <span className="hidden sm:inline">Remove</span>
                 </Button>
@@ -135,9 +139,9 @@ export function OpportunityPanel({ contactId, tab, stages, canWrite, onTab, onCl
                     <div className="grid gap-3"><Skeleton className="h-10" /><Skeleton className="h-40" /></div>
                   ) : (
                     <>
-                      <TabsContent value="overview" className="animate-page-in"><OverviewTab detail={d} stages={stages} canWrite={canWrite} onOpenTab={(t) => onTab(t as PanelTab)} /></TabsContent>
-                      <TabsContent value="tasks" className="animate-page-in"><TasksTab contactId={d.id} canWrite={canWrite} /></TabsContent>
-                      <TabsContent value="notes" className="animate-page-in"><NotesTab contactId={d.id} canWrite={canWrite} /></TabsContent>
+                      <TabsContent value="overview" className="animate-page-in"><OverviewTab detail={d} stages={stages} canWrite={canEdit} canAssign={canWrite} onOpenTab={(t) => onTab(t as PanelTab)} /></TabsContent>
+                      <TabsContent value="tasks" className="animate-page-in"><TasksTab contactId={d.id} canWrite={canEdit} /></TabsContent>
+                      <TabsContent value="notes" className="animate-page-in"><NotesTab contactId={d.id} canWrite={canEdit} /></TabsContent>
                       <TabsContent value="activity" className="animate-page-in"><ActivityTab contactId={d.id} /></TabsContent>
                     </>
                   )}

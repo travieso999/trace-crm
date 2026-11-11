@@ -261,6 +261,21 @@ Legend: [x] done & verified · [~] implemented, awaiting external verification �
 - [x] Templates carry a video, thumbnail and button text (migration d7a1e5c30b48, additive), copied onto a step when used
 - [x] Campaign rows have Relaunch, Resume, Pause, Archive and Delete. Relaunch makes a new draft without those who replied,
       unsubscribed or bounced, then shows the usual send confirmation; nothing sends without it
+- [x] Multi-user team (2026-11-10, branch team/multi-user, migration e8b2f4a61c97): Settings → Team Management (create,
+      edit, reset password, activate/deactivate, delete with reassignment; no account limit); sign-in by email or
+      username; permissions registry `app/core/permissions.py` (role defaults + per-user switches for adjustable
+      permissions; routes check permissions via `require_perm`; add a role there + in ROLES). Opportunities: Assigned To
+      on every card/row/detail (Unassigned when empty), owner changes logged as `owner_change` activity, created/updated
+      by + owner-assigned-by/at columns (backfilled from history; existing owners untouched), table view
+      (`GET /api/opportunities/list`), combinable filters (All / My / Unassigned / person, status, stage, created and
+      last-activity dates, search incl. owner name) kept in the URL and remembered per browser, bulk assign
+      (`POST /api/opportunities/bulk-assign`). Members edit teammates' deals by default (switchable), take unassigned
+      ones, can't reassign others' or remove them; inbox and prospect export can be switched off per person; mailbox
+      OAuth/settings stay admin-only. Deleted users are soft-deleted (name kept on history, email freed).
+- [x] Verified 2026-11-10: pytest 338 passed (13 new in tests/test_team.py, incl. migration backfill); ruff, tsc, eslint,
+      `next build` clean; headless Chrome E2E against a throwaway DB (create 2 employees in Team Management, separate
+      sign-ins, My/All, Unassigned, combined filters, filters kept/restored, bulk assign, member 403s, deactivation ends
+      session, ownership history), light/dark, phone width without horizontal scroll
 
 ## Blockers / limitations
 - Docker Desktop not installed yet (user action). Dev uses embedded Postgres (pgserver).

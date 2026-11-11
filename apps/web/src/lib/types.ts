@@ -1,13 +1,31 @@
 export type Page<T> = { items: T[]; total: number; page: number; page_size: number };
 
+export type Role = "admin" | "member" | "viewer";
+
 export type User = {
   id: string;
   email: string;
+  username: string | null;
   full_name: string;
-  role: "admin" | "member" | "viewer";
+  role: Role;
   is_active: boolean;
   last_login_at: string | null;
+  permissions: string[];
+  permission_overrides: Record<string, boolean>;
+  created_at: string | null;
+  password_changed_at: string | null;
 };
+
+/** A teammate as every signed-in user sees them (for owner pickers and filters). */
+export type TeamMember = { id: string; full_name: string; username: string | null; email: string; role: Role; is_active: boolean };
+
+export type PermissionCatalog = {
+  permissions: { key: string; label: string; description: string; adjustable: boolean }[];
+  roles: { key: Role; label: string; description: string; permissions: string[] }[];
+};
+
+/** Who an opportunity is assigned to (or who did something), as shown on cards and history. */
+export type PersonRef = { id: string; name: string; is_active: boolean };
 
 export type Tag = { id: string; name: string; color: string | null };
 
@@ -559,7 +577,12 @@ export type OppCard = {
   next_task: TaskBrief | null;
   open_tasks: number;
   updated_at: string;
+  owner: PersonRef | null;
 };
+
+export type OppRow = OppCard & { last_activity_at: string | null; created_at: string | null };
+
+export type OppList = { items: OppRow[]; total: number; value_cents: number; page: number; page_size: number };
 
 export type BoardStage = Omit<Stage, "count"> & { count: number; value_cents: number; items: OppCard[] };
 
@@ -576,6 +599,16 @@ export type OppDetail = OppCard & {
   created_at: string;
   next_task_detail: TaskBrief | null;
   latest_note: { id: string; body: string; created_at: string } | null;
+  accountability: {
+    created_by: PersonRef | null;
+    opportunity_created_at: string | null;
+    updated_by: PersonRef | null;
+    last_edited_at: string | null;
+    owner_assigned_by: PersonRef | null;
+    owner_assigned_at: string | null;
+  };
+  /** What the signed-in user may do here (the API enforces the same rules). */
+  can?: { edit: boolean; remove: boolean; assign_any: boolean; take: boolean; release: boolean };
 };
 
 export type TaskStatus = "open" | "overdue" | "completed";
@@ -596,6 +629,8 @@ export type OppTask = {
   reminder_sent_at: string | null;
   completed_at: string | null;
   created_at: string | null;
+  created_by: string | null;
+  assignee: string | null;
 };
 
 export type Note = {

@@ -3,7 +3,8 @@
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import Session, object_session
 
 from app.models import Contact, CrmTask, User
 from app.models.base import utcnow
@@ -135,9 +136,16 @@ def status_of(t: CrmTask, now: datetime | None = None) -> str:
     return "open"
 
 
-def task_out(t: CrmTask) -> dict:
+def task_out(t: CrmTask, names: dict | None = None) -> dict:
+    """``names``: user id -> display name; looked up when not given."""
     local = t.due_at.astimezone(_zone(t.timezone)) if t.due_at and t.timezone else t.due_at
+    if names is None:
+        sess = object_session(t)
+        ids = {i for i in (t.created_by_id, t.assignee_id) if i}
+        names = {u.id: u.display_name for u in sess.scalars(select(User).where(User.id.in_(ids)))} if sess and ids else {}
     return {
+        "created_by": names.get(t.created_by_id) if t.created_by_id else None,
+        "assignee": names.get(t.assignee_id) if t.assignee_id else None,
         "id": str(t.id), "contact_id": str(t.contact_id), "title": t.title, "description": t.description,
         "task_type": t.task_type, "timezone": t.timezone, "status": status_of(t),
         "due_at": t.due_at.isoformat() if t.due_at else None,

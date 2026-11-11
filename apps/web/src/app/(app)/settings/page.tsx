@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState, Field, PageHeader } from "@/components/common";
 import { ScheduleEditor } from "@/components/schedule-editor";
 import { useIsAdmin } from "@/components/app-shell";
+import { SettingsNav } from "@/components/settings-nav";
 import { api, errorMessage } from "@/lib/api";
 import type { SettingsResponse } from "@/lib/types";
 
@@ -112,6 +113,7 @@ export default function SettingsPage() {
     return (
       <>
         <PageHeader title="Settings" />
+        <SettingsNav />
         <div className="grid gap-4 lg:grid-cols-2">
           <Skeleton className="h-56" />
           <Skeleton className="h-56" />
@@ -124,6 +126,7 @@ export default function SettingsPage() {
   return (
     <>
       <PageHeader title="Settings" description={ro ? "Only admins can change settings." : "Workspace-wide defaults and compliance."} />
+      <SettingsNav />
       {problems.length > 0 && (
         <div className="mb-4 rounded-xl border border-signal/30 bg-primary/5 p-3 text-sm" role="status">
           <p className="flex items-center gap-2 font-medium">

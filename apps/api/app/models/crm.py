@@ -137,7 +137,16 @@ class CrmOpportunity(UUIDPk, Timestamps, Base):
     )
     value_cents: Mapped[int | None] = mapped_column(BigInteger)
     meeting_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    owner_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    # Assigned To. NULL = unassigned
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    owner_assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    owner_assigned_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    updated_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    # when a person last changed the opportunity (updated_at also moves on automated changes)
+    last_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     notes: Mapped[str | None] = mapped_column(Text)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # explicit board column; NULL = the stage linked to the lead's status

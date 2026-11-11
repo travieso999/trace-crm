@@ -15,7 +15,7 @@ import { api, errorMessage } from "@/lib/api";
 import { zodResolver } from "@/lib/zod-resolver";
 
 const schema = z.object({
-  email: z.email("Enter a valid email"),
+  email: z.string().trim().min(1, "Enter your email or username"),
   password: z.string().min(1, "Password is required"),
 });
 type Values = z.infer<typeof schema>;
@@ -41,8 +41,8 @@ function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4" noValidate>
-      <Field label="Email" htmlFor="email" error={formState.errors.email?.message}>
-        <Input id="email" type="email" autoComplete="username" autoFocus {...register("email")} aria-invalid={!!formState.errors.email} />
+      <Field label="Email or username" htmlFor="email" error={formState.errors.email?.message}>
+        <Input id="email" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} autoFocus {...register("email")} aria-invalid={!!formState.errors.email} />
       </Field>
       <Field label="Password" htmlFor="password" error={formState.errors.password?.message}>
         <Input id="password" type="password" autoComplete="current-password" {...register("password")} aria-invalid={!!formState.errors.password} />

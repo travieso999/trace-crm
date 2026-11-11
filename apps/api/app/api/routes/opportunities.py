@@ -1,16 +1,17 @@
 """Opportunities CRM: customizable stages, board, opportunity detail, tasks, notes and activity history."""
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import admin, audit, reader, writer
+from app.api.deps import admin, audit, reader, require_perm, writer
+from app.core import permissions
 from app.core.db import get_db
-from app.models import Contact, CrmActivity, CrmNote, CrmTask, PipelineStage, User
+from app.models import Contact, CrmActivity, CrmNote, CrmOpportunity, CrmTask, PipelineStage, User
 from app.models.base import utcnow
 from app.services import app_settings, notes, tasks
 from app.services import opportunities as svc
@@ -45,6 +46,7 @@ class OpportunityPatch(BaseModel):
     status: str | None = Field(default=None, pattern="^(open|won|lost)$")
     value_cents: int | None = Field(default=None, ge=0, le=10**12)
     meeting_at: datetime | None = None
+    owner_id: uuid.UUID | None = None  # explicit null = Unassigned
 
 
 class OpportunityCreate(BaseModel):
@@ -55,6 +57,12 @@ class OpportunityCreate(BaseModel):
     phone: str | None = Field(default=None, max_length=60)
     stage_id: uuid.UUID | None = None
     value_cents: int | None = Field(default=None, ge=0, le=10**12)
+    owner_id: uuid.UUID | None = None  # left out = the creator; explicit null = Unassigned
+
+
+class BulkAssignIn(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    owner_id: uuid.UUID | None  # null = Unassigned
 
 
 class MoveIn(BaseModel):
@@ -88,6 +96,44 @@ class NoteIn(BaseModel):
 
 class TaskTypesIn(BaseModel):
     task_types: list[str] = Field(min_length=1, max_length=30)
+
+
+def opp_filter(
+    q: str | None = Query(None, max_length=200),
+    owner: str | None = Query(None, max_length=40, description='"me", "unassigned" or a user id'),
+    status: str | None = Query(None, pattern="^(open|won|lost)$"),
+    stage_id: uuid.UUID | None = None,
+    created_from: date | None = None,
+    created_to: date | None = None,
+    activity_from: date | None = None,
+    activity_to: date | None = None,
+) -> svc.OppFilter:
+    if owner not in (None, "", "me", "unassigned"):
+        try:
+            uuid.UUID(owner)
+        except ValueError as exc:
+            raise HTTPException(422, "owner must be me, unassigned or a user id") from exc
+    return svc.OppFilter(q=q, owner=owner or None, status=status, stage_id=stage_id, created_from=created_from,
+                         created_to=created_to, activity_from=activity_from, activity_to=activity_to)
+
+
+def _editable(db: Session, contact_id: uuid.UUID, user: User) -> None:
+    """403 unless ``user`` may change this opportunity (their own, unassigned, or a teammate's when allowed). Passing
+    means a change is about to be made, so it is recorded as the opportunity's last update."""
+    opp = svc.get_opportunity(db, contact_id)
+    try:
+        svc.ensure_can_edit(user, opp)
+    except svc.NotAllowed as exc:
+        raise HTTPException(403, str(exc)) from exc
+    if opp is not None:
+        svc.touch(opp, user)
+
+
+def _owner(db: Session, owner_id: uuid.UUID | None) -> User | None:
+    try:
+        return svc.resolve_owner(db, owner_id)
+    except svc.StageError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def _contact(db: Session, contact_id: uuid.UUID) -> Contact:
@@ -185,28 +231,67 @@ def delete_stage(stage_id: uuid.UUID, request: Request, move_to: uuid.UUID | Non
 # --- board and detail -----------------------------------------------------------------------------
 
 @router.get("")
-def board(q: str | None = None, _: User = Depends(reader), db: Session = Depends(get_db)):
-    return {"stages": svc.board(db, q)}
+def board(f: svc.OppFilter = Depends(opp_filter), user: User = Depends(reader), db: Session = Depends(get_db)):
+    try:
+        return {"stages": svc.board(db, f, user)}
+    except svc.StageError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+SORT_PATTERN = "^(" + "|".join(svc.SORTS) + ")$"
+
+
+@router.get("/list")
+def table(f: svc.OppFilter = Depends(opp_filter), sort: str = Query("updated", pattern=SORT_PATTERN),
+          order: str = Query("desc", pattern="^(asc|desc)$"), page: int = Query(1, ge=1),
+          page_size: int = Query(50, ge=1, le=200), user: User = Depends(reader), db: Session = Depends(get_db)):
+    try:
+        return svc.listing(db, f, user, sort, order == "desc", page, page_size)
+    except svc.StageError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("", status_code=201)
-def create_opportunity(body: OpportunityCreate, request: Request, user: User = Depends(writer),
+def create_opportunity(body: OpportunityCreate, request: Request, user: User = Depends(require_perm("opportunities.create")),
                        db: Session = Depends(get_db)):
     stage = _stage(db, body.stage_id) if body.stage_id else None
+    owner_given = "owner_id" in body.model_fields_set
+    owner = _owner(db, body.owner_id) if owner_given else user
+    if owner_given and body.owner_id not in (None, user.id) and not permissions.has(user, "opportunities.reassign"):
+        raise HTTPException(403, "You can create opportunities for yourself or leave them unassigned")
     try:
-        contact, reused = svc.create_opportunity(db, body.model_dump(), stage, user)
+        contact, reused = svc.create_opportunity(db, body.model_dump(exclude={"owner_id"}), stage, user, owner, owner_given)
     except svc.StageError as exc:
         db.rollback()
         raise HTTPException(409 if "already" in str(exc) else 422, str(exc)) from exc
-    audit(db, user, "opportunity.created", "contact", contact.id, request, reused_prospect=reused)
+    audit(db, user, "opportunity.created", "contact", contact.id, request, reused_prospect=reused,
+          owner_id=str(owner.id) if owner else None)
     db.commit()
     return {**svc.detail(db, contact), "reused_prospect": reused}
+
+
+@router.post("/bulk-assign")
+def bulk_assign(body: BulkAssignIn, request: Request, user: User = Depends(require_perm("opportunities.reassign")),
+                db: Session = Depends(get_db)):
+    owner = _owner(db, body.owner_id)
+    ids = list(dict.fromkeys(body.ids))
+    contacts = list(db.scalars(select(Contact).join(CrmOpportunity, CrmOpportunity.contact_id == Contact.id)
+                               .where(Contact.id.in_(ids), Contact.deleted_at.is_(None), CrmOpportunity.on_board.is_(True))))
+    changed = sum(svc.assign(db, c, owner, user, reason="bulk") for c in contacts)
+    for c in contacts:
+        c.updated_at = utcnow()
+    audit(db, user, "opportunity.bulk_assigned", "contact", None, request, count=len(contacts), changed=changed,
+          owner_id=str(owner.id) if owner else None)
+    db.commit()
+    return {"updated": changed, "matched": len(contacts), "skipped": len(ids) - len(contacts)}
 
 
 @router.post("/{contact_id}/remove")
 def remove_opportunity(contact_id: uuid.UUID, request: Request, user: User = Depends(writer),
                        db: Session = Depends(get_db)):
     c = _contact(db, contact_id)
+    if not svc.can_remove(user, svc.get_opportunity(db, c.id)):
+        raise HTTPException(403, "Only admins (or teammates allowed to) can remove opportunities they don't own")
     try:
         svc.remove_from_board(db, c, user)
     except svc.StageError as exc:
@@ -232,9 +317,25 @@ def put_task_types(body: TaskTypesIn, request: Request, user: User = Depends(wri
     return {"task_types": value["task_types"], "default_timezone": tasks.default_timezone(db)}
 
 
+def _abilities(user: User, opp) -> dict:
+    """What this user may do here, so the UI only shows working controls (the API still enforces every one)."""
+    owner = opp.owner_id if opp else None
+    return {
+        "edit": svc.can_edit(user, opp),
+        "remove": svc.can_remove(user, opp),
+        "assign_any": permissions.has(user, "opportunities.reassign"),
+        "take": owner != user.id and svc.can_assign(user, owner, user.id),
+        "release": owner == user.id and svc.can_assign(user, owner, None),
+    }
+
+
+def _detail_for(db: Session, c: Contact, user: User) -> dict:
+    return {**svc.detail(db, c), "can": _abilities(user, svc.get_opportunity(db, c.id))}
+
+
 @router.get("/{contact_id}")
-def get_opportunity(contact_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
-    return svc.detail(db, _contact(db, contact_id))
+def get_opportunity(contact_id: uuid.UUID, user: User = Depends(reader), db: Session = Depends(get_db)):
+    return _detail_for(db, _contact(db, contact_id), user)
 
 
 @router.patch("/{contact_id}")
@@ -242,6 +343,16 @@ def update_opportunity(contact_id: uuid.UUID, body: OpportunityPatch, request: R
                        db: Session = Depends(get_db)):
     c = _contact(db, contact_id)
     data = body.model_dump(exclude_unset=True)
+    owner_change = "owner_id" in data
+    new_owner_id = data.pop("owner_id", None)
+    opp = svc.get_opportunity(db, c.id)
+    if data:  # anything other than Assigned To needs edit rights
+        _editable(db, c.id, user)
+    new_owner = None
+    if owner_change:
+        if not svc.can_assign(user, opp.owner_id if opp else None, new_owner_id):
+            raise HTTPException(403, "You can take unassigned opportunities or hand back your own. Ask an admin to reassign.")
+        new_owner = _owner(db, new_owner_id)
     try:
         changed = svc.update_details(db, c, data, user)
         if data.get("stage_id"):
@@ -253,22 +364,28 @@ def update_opportunity(contact_id: uuid.UUID, body: OpportunityPatch, request: R
             for f in ("value_cents", "meeting_at"):
                 if f in data:
                     setattr(opp, f, data[f])
+            svc.touch(opp, user)
+        if owner_change:
+            svc.assign(db, c, new_owner, user)
     except svc.StageError as exc:
         db.rollback()
         raise HTTPException(409 if "already uses" in str(exc) else 422, str(exc)) from exc
     c.updated_at = utcnow()
-    audit(db, user, "opportunity.updated", "contact", c.id, request, fields=sorted(data), contact_fields=changed)
+    fields = sorted([*data, *(["owner_id"] if owner_change else [])])
+    extra = {"owner_id": str(new_owner_id) if new_owner_id else None} if owner_change else {}
+    audit(db, user, "opportunity.updated", "contact", c.id, request, fields=fields, contact_fields=changed, **extra)
     db.commit()
-    return svc.detail(db, c)
+    return _detail_for(db, c, user)
 
 
 @router.post("/{contact_id}/move")
 def move(contact_id: uuid.UUID, body: MoveIn, user: User = Depends(writer), db: Session = Depends(get_db)):
     c = _contact(db, contact_id)
+    _editable(db, c.id, user)
     svc.move(db, c, _stage(db, body.stage_id), user)
     c.updated_at = utcnow()
     db.commit()
-    return svc.detail(db, c)
+    return _detail_for(db, c, user)
 
 
 # --- tasks ----------------------------------------------------------------------------------------
@@ -293,6 +410,7 @@ def list_tasks(contact_id: uuid.UUID, status: str = Query("all", pattern="^(all|
 @router.post("/{contact_id}/tasks", status_code=201)
 def create_task(contact_id: uuid.UUID, body: TaskIn, user: User = Depends(writer), db: Session = Depends(get_db)):
     c = _contact(db, contact_id)
+    _editable(db, c.id, user)
     try:
         t = tasks.create(db, c, body.model_dump(exclude_unset=True), user)
     except tasks.TaskError as exc:
@@ -304,6 +422,7 @@ def create_task(contact_id: uuid.UUID, body: TaskIn, user: User = Depends(writer
 @router.patch("/tasks/{task_id}")
 def update_task(task_id: uuid.UUID, body: TaskPatch, user: User = Depends(writer), db: Session = Depends(get_db)):
     t = _task(db, task_id)
+    _editable(db, t.contact_id, user)
     data = body.model_dump(exclude_unset=True)
     done = data.pop("completed", None)
     try:
@@ -320,7 +439,9 @@ def update_task(task_id: uuid.UUID, body: TaskPatch, user: User = Depends(writer
 
 @router.delete("/tasks/{task_id}")
 def delete_task(task_id: uuid.UUID, user: User = Depends(writer), db: Session = Depends(get_db)):
-    tasks.delete(db, _task(db, task_id), user)
+    t = _task(db, task_id)
+    _editable(db, t.contact_id, user)
+    tasks.delete(db, t, user)
     db.commit()
     return {"message": "Task deleted"}
 
@@ -337,17 +458,19 @@ def list_notes(contact_id: uuid.UUID, include_archived: bool = False, _: User = 
 @router.post("/{contact_id}/notes", status_code=201)
 def add_note(contact_id: uuid.UUID, body: NoteIn, user: User = Depends(writer), db: Session = Depends(get_db)):
     _contact(db, contact_id)
+    _editable(db, contact_id, user)
     try:
         n = notes.create(db, contact_id, body.body, user)
     except notes.NoteError as exc:
         raise HTTPException(422, str(exc)) from exc
     db.commit()
-    return notes.note_out(n, {user.id: user.full_name or user.email})
+    return notes.note_out(n, {user.id: svc.display_name(user)})
 
 
 @notes_router.patch("/{note_id}")
 def edit_note(note_id: uuid.UUID, body: NoteIn, user: User = Depends(writer), db: Session = Depends(get_db)):
     n = _note(db, note_id)
+    _editable(db, n.contact_id, user)
     try:
         notes.edit(db, n, body.body, user)
     except notes.NoteError as exc:
@@ -359,6 +482,7 @@ def edit_note(note_id: uuid.UUID, body: NoteIn, user: User = Depends(writer), db
 @notes_router.post("/{note_id}/archive")
 def archive_note(note_id: uuid.UUID, archived: bool = True, user: User = Depends(writer), db: Session = Depends(get_db)):
     n = _note(db, note_id)
+    _editable(db, n.contact_id, user)
     notes.set_archived(db, n, archived, user)
     db.commit()
     return [x for x in notes.listing(db, n.contact_id, True) if x["id"] == str(n.id)][0]
@@ -372,18 +496,22 @@ def note_revisions(note_id: uuid.UUID, _: User = Depends(reader), db: Session = 
 # --- activity -------------------------------------------------------------------------------------
 
 @router.get("/{contact_id}/activity")
-def activity(contact_id: uuid.UUID, limit: int = Query(200, ge=1, le=500), _: User = Depends(reader),
-             db: Session = Depends(get_db)):
+def activity(contact_id: uuid.UUID, limit: int = Query(200, ge=1, le=500),
+             type: list[str] | None = Query(None, max_length=10),  # noqa: A002
+             _: User = Depends(reader), db: Session = Depends(get_db)):
     c = _contact(db, contact_id)
-    rows = list(db.scalars(select(CrmActivity).where(CrmActivity.contact_id == c.id)
-                           .order_by(CrmActivity.created_at.desc()).limit(limit)))
-    users = {u.id: (u.full_name or u.email) for u in db.scalars(
+    stmt = select(CrmActivity).where(CrmActivity.contact_id == c.id)
+    if type:
+        stmt = stmt.where(CrmActivity.type.in_(type))
+    rows = list(db.scalars(stmt.order_by(CrmActivity.created_at.desc()).limit(limit)))
+    users = {u.id: svc.display_name(u) for u in db.scalars(
         select(User).where(User.id.in_({r.user_id for r in rows if r.user_id})))} if rows else {}
+    shown = ("from_stage", "to_stage", "fields", "task_id", "note_id", "from_owner", "to_owner")
     out = [{"id": str(r.id), "type": r.type, "summary": r.summary, "at": r.created_at.isoformat(),
             "actor": users.get(r.user_id) or ("System" if r.user_id is None else "Former user"),
-            "data": {k: v for k, v in (r.data or {}).items() if k in ("from_stage", "to_stage", "fields", "task_id", "note_id")}}
+            "data": {k: v for k, v in (r.data or {}).items() if k in shown}}
            for r in rows]
-    if not any(r.type == "created" for r in rows):
+    if not type and not any(r.type == "created" for r in rows):
         out.append({"id": "created", "type": "created", "summary": "Prospect created", "at": c.created_at.isoformat(),
                     "actor": "System", "data": {}})
     return sorted(out, key=lambda r: r["at"], reverse=True)

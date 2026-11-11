@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import audit, reader, writer
+from app.api.deps import audit, reader, require_perm, writer
 from app.core.db import get_db
 from app.models import Campaign, Contact, Conversation, EmailAccount, ReceivedMessage, SentMessage, User
 from app.models.base import utcnow
@@ -19,7 +19,7 @@ from app.services.contacts import log_activity
 from app.services.inbound import latest_text
 from app.services.rendering import signature_image_html, text_to_html
 
-router = APIRouter(prefix="/api/inbox", tags=["inbox"])
+router = APIRouter(prefix="/api/inbox", tags=["inbox"], dependencies=[Depends(require_perm("inbox.access"))])
 
 INTENTS = ("positive", "neutral", "negative", "meeting", "not_now", "wrong_person")
 

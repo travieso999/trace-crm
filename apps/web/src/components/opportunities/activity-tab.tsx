@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   Archive, ArrowRightLeft, Bell, CheckCircle2, CircleDot, History, ListPlus, Mail, MessageSquareReply, NotebookPen, Pencil,
-  RotateCcw, Sparkles, Trash2, UserRoundPen,
+  RotateCcw, Sparkles, Trash2, UserRoundCheck, UserRoundPen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,6 +17,7 @@ const ICONS: Record<string, LucideIcon> = {
   task_created: ListPlus, task_updated: Pencil, task_completed: CheckCircle2, task_reopened: RotateCcw, task_deleted: Trash2,
   task: ListPlus, note: NotebookPen, note_edited: Pencil, note_archived: Archive, note_restored: RotateCcw,
   email_sent: Mail, reply: MessageSquareReply, reminder: Bell,
+  owner_change: UserRoundCheck, opportunity_created: Sparkles,
 };
 
 export function ActivityTab({ contactId }: { contactId: string }) {

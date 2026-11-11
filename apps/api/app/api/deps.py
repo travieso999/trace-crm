@@ -4,6 +4,7 @@ from collections.abc import Callable
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+from app.core import permissions
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import load_session
@@ -40,6 +41,19 @@ def require_role(min_role: str) -> Callable[[User], User]:
     def dep(user: User = Depends(current_user)) -> User:
         if ROLE_RANK.get(user.role, -1) < ROLE_RANK[min_role]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Insufficient permissions")
+        return user
+
+    return dep
+
+
+def require_perm(perm: str) -> Callable[[User], User]:
+    """Route guard for one permission (role default plus the user's adjustments; see app.core.permissions)."""
+    if perm not in permissions.PERMISSIONS:
+        raise ValueError(f"Unknown permission {perm}")
+
+    def dep(user: User = Depends(current_user)) -> User:
+        if not permissions.has(user, perm):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "You don't have permission to do this")
         return user
 
     return dep

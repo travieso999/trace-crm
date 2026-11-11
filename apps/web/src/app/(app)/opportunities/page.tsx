@@ -16,12 +16,14 @@ import {
   type DragEndEvent,
   type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
-import { AlarmClock, CalendarClock, Columns3, Mail, Phone, Plus, Search } from "lucide-react";
+import { AlarmClock, CalendarClock, Columns3, KanbanSquare, Mail, Phone, Plus, Rows3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState, PageHeader } from "@/components/common";
-import { useCanWrite, useIsAdmin } from "@/components/app-shell";
+import { useCan, useCanWrite, useIsAdmin, useMe } from "@/components/app-shell";
+import { OwnerChip } from "@/components/team";
+import { FilterBar, apiFilters, useOppFilters } from "@/components/opportunities/filters";
+import { OpportunityTable } from "@/components/opportunities/opportunity-table";
 import { OpportunityPanel, PANEL_TABS, type PanelTab } from "@/components/opportunities/opportunity-panel";
 import { StageManager } from "@/components/opportunities/stage-manager";
 import { NewOpportunityDialog } from "@/components/opportunities/new-opportunity";
@@ -83,6 +85,7 @@ function Card({ card, canWrite, active, onOpen }: { card: OppCard; canWrite: boo
           <span className="size-1.5 rounded-full" style={{ background: card.stage_color }} aria-hidden />{card.stage_name}
         </span>
         {card.status !== "open" && <span className="rounded-full bg-muted px-1.5 py-px text-[11px] capitalize">{card.status}</span>}
+        <OwnerChip owner={card.owner} className="ml-auto max-w-32 text-[11px]" />
         {t && (
           <span className={cn("inline-flex min-w-0 items-center gap-1 text-[11px]", t.overdue ? "font-medium text-destructive" : "text-muted-foreground")}
             title={`${t.task_type}: ${t.title}`}>
@@ -130,6 +133,11 @@ function OpportunitiesBoard() {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
+  const meId = useMe().data?.user.id;
+  const canAssignAny = useCan("opportunities.reassign");
+  const canTake = useCan("opportunities.assign_self");
+  const canCreate = useCan("opportunities.create");
+  const { filters, set, clear, active, view, setView, replace } = useOppFilters();
   const openId = params.get("open");
   const tabParam = params.get("tab");
   const tab: PanelTab = PANEL_TABS.includes(tabParam as PanelTab) ? (tabParam as PanelTab) : "overview";
@@ -146,28 +154,41 @@ function OpportunitiesBoard() {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }, [params, pathname, router]);
 
-  const [search, setSearch] = React.useState("");
-  const [q, setQ] = React.useState("");
+  // search box: typed locally, written to the URL (and so to the API) after a short pause
+  const [search, setSearch] = React.useState(filters.q);
+  const [seenQ, setSeenQ] = React.useState(filters.q);
+  if (filters.q !== seenQ) {
+    setSeenQ(filters.q);
+    setSearch(filters.q);
+  }
   React.useEffect(() => {
-    const t = setTimeout(() => setQ(search.trim()), 250);
+    const t = setTimeout(() => { if (search.trim() !== filters.q) set({ q: search.trim() }); }, 250);
     return () => clearTimeout(t);
-  }, [search]);
+  }, [search, filters.q, set]);
+  const query = apiFilters(filters, filters.q);
+  const boardKey = ["opportunities", "board", query] as const;
+  const page = Math.max(1, Number(params.get("page")) || 1);
+  const sort = { key: params.get("sort") || "updated", order: (params.get("order") === "asc" ? "asc" : "desc") as "asc" | "desc" };
   const [managing, setManaging] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const stages = useQuery({ queryKey: ["opportunity-stages"], queryFn: () => api<Stage[]>("/api/opportunities/stages") });
-  const board = useQuery({ queryKey: ["opportunities", q], queryFn: () => api<{ stages: BoardStage[] }>("/api/opportunities", { query: { q } }) });
+  const board = useQuery({
+    queryKey: boardKey,
+    queryFn: () => api<{ stages: BoardStage[] }>("/api/opportunities", { query }),
+    enabled: view === "board",
+  });
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: columnJump }));
 
   const move = useMutation({
     mutationFn: ({ id, to }: { id: string; to: string }) => api(`/api/opportunities/${id}/move`, { body: { stage_id: to } }),
     onMutate: async ({ id, to }) => {
-      await qc.cancelQueries({ queryKey: ["opportunities", q] });
-      const prev = qc.getQueryData<{ stages: BoardStage[] }>(["opportunities", q]);
+      await qc.cancelQueries({ queryKey: boardKey });
+      const prev = qc.getQueryData<{ stages: BoardStage[] }>(boardKey);
       if (prev) {
         const card = prev.stages.flatMap((s) => s.items).find((c) => c.id === id);
         const target = prev.stages.find((s) => s.id === to);
         if (card && target)
-          qc.setQueryData(["opportunities", q], {
+          qc.setQueryData(boardKey, {
             stages: prev.stages.map((s) => {
               const without = s.items.filter((c) => c.id !== id);
               if (s.id === to) return { ...s, count: s.count + 1, items: [{ ...card, stage_id: s.id, stage_name: s.name, stage_color: s.color }, ...without] };
@@ -178,7 +199,7 @@ function OpportunitiesBoard() {
       return { prev };
     },
     onError: (e, _v, ctx) => {
-      if (ctx?.prev) qc.setQueryData(["opportunities", q], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(boardKey, ctx.prev);
       toast.error(errorMessage(e));
     },
     onSuccess: (_r, { id, to }) => {
@@ -206,28 +227,49 @@ function OpportunitiesBoard() {
     <>
       <PageHeader
         title="Opportunities"
-        description={board.data ? `${num(total)} ${total === 1 ? "opportunity" : "opportunities"}${totalValue ? ` · ${money(totalValue)} in deals` : ""}` : "Drag opportunities between stages."}
+        description={view === "board" && board.data ? `${num(total)} ${active ? "matching" : total === 1 ? "opportunity" : "opportunities"}${totalValue ? ` · ${money(totalValue)} in deals` : ""}` : "Every opportunity in the workspace, with who owns it."}
         actions={
           <div className="flex flex-wrap gap-2">
+            <div role="tablist" aria-label="View" className="inline-flex rounded-lg border p-0.5">
+              {([["board", KanbanSquare, "Board"], ["table", Rows3, "Table"]] as const).map(([v, Icon, label]) => (
+                <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => setView(v)}
+                  className={cn("inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground",
+                    view === v && "bg-muted font-medium text-foreground")}>
+                  <Icon className="size-4" aria-hidden />{label}
+                </button>
+              ))}
+            </div>
             {isAdmin && <Button variant="outline" onClick={() => setManaging(true)} disabled={!stages.data}><Columns3 /> Manage stages</Button>}
-            {canWrite && <Button onClick={() => setCreating(true)} disabled={!stages.data}><Plus /> New opportunity</Button>}
+            {canWrite && canCreate && <Button onClick={() => setCreating(true)} disabled={!stages.data}><Plus /> New opportunity</Button>}
           </div>
         }
       />
-      <div className="relative mb-4 w-full sm:w-80">
-        <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
-        <Input type="search" placeholder="Search name, business, email, phone…" aria-label="Search opportunities" className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} />
-      </div>
-      {board.isError ? (
+      <FilterBar filters={filters} set={set} clear={clear} active={active} search={search} onSearch={setSearch}
+        stages={stages.data ?? []} meId={meId} />
+      {view === "table" ? (
+        <OpportunityTable
+          query={query}
+          page={page}
+          onPage={(p) => replace((x) => (p > 1 ? x.set("page", String(p)) : x.delete("page")))}
+          sort={sort}
+          onSort={(s) => replace((x) => { x.set("sort", s.key); x.set("order", s.order); x.delete("page"); })}
+          meId={meId}
+          canAssignAny={canAssignAny}
+          canTake={canTake}
+          openId={openId}
+          onOpen={(id) => setPanel(id)}
+          filtered={active > 0}
+        />
+      ) : board.isError ? (
         <ErrorState error={board.error} onRetry={() => board.refetch()} />
       ) : board.isPending ? (
         <div className="flex gap-3 overflow-hidden">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-96 w-72 shrink-0" />)}</div>
       ) : (
         <>
-        {total === 0 && !q && (
+        {total === 0 && !active && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed px-4 py-3 text-sm animate-page-in">
             <span className="text-muted-foreground">No opportunities yet. Prospects from campaigns stay in Prospects until you add them here.</span>
-            {canWrite && <Button size="sm" onClick={() => setCreating(true)} disabled={!stages.data}><Plus /> New opportunity</Button>}
+            {canWrite && canCreate && <Button size="sm" onClick={() => setCreating(true)} disabled={!stages.data}><Plus /> New opportunity</Button>}
           </div>
         )}
         <DndContext sensors={sensors} onDragEnd={onDragEnd}>
@@ -248,7 +290,7 @@ function OpportunitiesBoard() {
         onClose={() => setPanel(null)}
       />
       {isAdmin && stages.data && <StageManager open={managing} onOpenChange={setManaging} stages={stages.data} />}
-      {canWrite && stages.data && (
+      {canWrite && canCreate && stages.data && (
         <NewOpportunityDialog open={creating} onOpenChange={setCreating} stages={stages.data} onCreated={(id) => setPanel(id)} />
       )}
     </>

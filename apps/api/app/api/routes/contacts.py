@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.api.deps import audit, reader, writer
+from app.api.deps import audit, reader, require_perm, writer
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.models import Campaign, CampaignContact, Contact, CrmActivity, Tag, User
@@ -131,7 +131,7 @@ def count_contacts(f: AudienceFilter = Depends(contact_filter), _: User = Depend
 def export_contacts(
     request: Request,
     f: AudienceFilter = Depends(contact_filter),
-    user: User = Depends(writer),  # bulk download of prospect data: members and admins only
+    user: User = Depends(require_perm("prospects.export")),  # bulk download of prospect data
     db: Session = Depends(get_db),
 ):
     contacts = list(db.scalars(contacts_query(f).order_by(Contact.created_at).limit(100_000)))

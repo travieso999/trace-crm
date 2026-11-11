@@ -12,6 +12,7 @@ import { api, errorMessage } from "@/lib/api";
 import { dateTime, relTime } from "@/lib/format";
 import type { OppDetail, OppStatus, Stage } from "@/lib/types";
 import { dueLabel, useDirty, useInvalidateOpportunity } from "./shared";
+import { OwnershipCard } from "./ownership";
 
 type Form = { first_name: string; last_name: string; company_name: string; email: string; phone: string; stage_id: string; status: OppStatus };
 
@@ -20,10 +21,12 @@ const fromDetail = (d: OppDetail): Form => ({
   email: d.email, phone: d.phone ?? "", stage_id: d.stage_id, status: d.status,
 });
 
-export function OverviewTab({ detail, stages, canWrite, onOpenTab }: {
+export function OverviewTab({ detail, stages, canWrite, canAssign, onOpenTab }: {
   detail: OppDetail;
   stages: Stage[];
   canWrite: boolean;
+  /** may use the Assigned To control at all (what they may pick is in detail.can) */
+  canAssign: boolean;
   onOpenTab: (tab: string) => void;
 }) {
   const invalidate = useInvalidateOpportunity(detail.id);
@@ -112,6 +115,7 @@ export function OverviewTab({ detail, stages, canWrite, onOpenTab }: {
       </form>
 
       <aside className="grid content-start gap-3">
+        <OwnershipCard detail={detail} canAssign={canAssign} />
         <button type="button" onClick={() => onOpenTab("tasks")}
           className="group grid gap-1 rounded-xl border bg-muted/30 p-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring">
           <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground"><CalendarClock className="size-3.5" aria-hidden /> Next task</span>

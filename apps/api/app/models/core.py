@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,15 +13,33 @@ ROLES = ("admin", "member", "viewer")
 
 
 class User(UUIDPk, Timestamps, Base):
+    """A person who signs in. Deleting a user keeps the row (``deleted_at``) so history still shows their name; the
+    email and username are released for reuse and the account can never sign in again."""
+
     __tablename__ = "users"
-    __table_args__ = (CheckConstraint(f"role in {ROLES}", name="role"),)
+    __table_args__ = (
+        CheckConstraint(f"role in {ROLES}", name="role"),
+        Index("uq_users_username_lower", func.lower(text("username")), unique=True),
+    )
 
     email: Mapped[str] = mapped_column(String(320), unique=True)
+    username: Mapped[str | None] = mapped_column(String(60))
     full_name: Mapped[str] = mapped_column(String(200), default="")
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="member")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # adjustable permission -> on/off, differing from the role default (see app.core.permissions)
+    permission_overrides: Mapped[dict] = mapped_column(JSONB, default=dict, server_default=text("'{}'::jsonb"))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    password_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    @property
+    def display_name(self) -> str:
+        """Name shown on history and owner fields. A deleted account keeps its name but never its placeholder email."""
+        if self.deleted_at is not None:
+            return self.full_name or "Former user"
+        return self.full_name or self.username or self.email
 
 
 class UserSession(UUIDPk, Base):

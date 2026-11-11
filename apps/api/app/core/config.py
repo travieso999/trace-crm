@@ -24,9 +24,13 @@ class Settings(BaseSettings):
     # HMAC secret for unsubscribe tokens
     secret_key: str = ""
 
-    session_ttl_hours: int = 12
-    # A session unused for this long ends even before its TTL (an unattended, unlocked laptop)
-    session_idle_minutes: int = 120
+    # How long a sign-in lasts on a device. Deactivating, deleting or a password reset ends it at once.
+    session_ttl_hours: int = 24 * 30
+    # End a session unused for this many minutes even before its TTL; 0 = off (the owner's choice, 2026-11-11)
+    session_idle_minutes: int = 0
+    # Two-step verification is skipped when signing in from an IP address where this person completed it within
+    # this many days (since they last set it up); a new address asks for the code. 0 = ask at every sign-in.
+    mfa_trusted_ip_days: int = 90
     session_cookie_name: str = "ts_session"
     csrf_cookie_name: str = "ts_csrf"
     cookie_secure: bool = False

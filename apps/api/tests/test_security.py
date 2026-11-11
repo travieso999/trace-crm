@@ -141,11 +141,24 @@ def test_repeated_failed_sign_ins_lock_the_account(app, client, db):
     assert anon.post("/api/auth/login", json={"email": "second@trace.studio", "password": PASSWORD}).status_code == 200
 
 
-def test_idle_session_expires(app, client, db):
-    assert client.get("/api/auth/me").status_code == 200
+def test_idle_timeout_is_off_by_default_and_works_when_set(app, client, db, monkeypatch):
+    from app.core.config import get_settings
+
+    db.execute(update(UserSession).values(last_seen_at=utcnow() - timedelta(hours=3)))
+    db.commit()
+    assert client.get("/api/auth/me").status_code == 200  # stepping away doesn't sign anyone out
+    monkeypatch.setattr(get_settings(), "session_idle_minutes", 120)
     db.execute(update(UserSession).values(last_seen_at=utcnow() - timedelta(hours=3)))
     db.commit()
     assert client.get("/api/auth/me").status_code == 401
+
+
+def test_sign_in_lasts_30_days(app, db):
+    make_user(email="long@trace.studio")
+    r = TestClient(app).post("/api/auth/login", json={"email": "long@trace.studio", "password": PASSWORD})
+    sess = db.scalar(select(UserSession).order_by(UserSession.created_at.desc()))
+    assert timedelta(days=29) < sess.expires_at - utcnow() <= timedelta(days=30)
+    assert "Max-Age=2592000" in r.headers["set-cookie"]
 
 
 def test_permission_probing_alerts_admins(app, client, db):
@@ -220,7 +233,10 @@ def _code(secret: str, steps_ahead: int = 0) -> str:
     return pyotp.TOTP(secret).at(time.time() + 30 * steps_ahead)
 
 
-def test_mfa_sign_in_flow(app, client, db):
+def test_mfa_sign_in_flow(app, client, db, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "mfa_trusted_ip_days", 0)  # every sign-in asks, so each step is exercised
     secret, recovery = _enable_mfa(client)
     stored = db.scalar(select(User).where(User.email == "admin@trace.studio"))
     assert secret not in (stored.totp_secret_enc or "") and decrypt(stored.totp_secret_enc) == secret
@@ -246,6 +262,32 @@ def test_mfa_sign_in_flow(app, client, db):
     t3 = third.post("/api/auth/login", json={"email": "admin@trace.studio", "password": PASSWORD}).json()["mfa_token"]
     assert third.post("/api/auth/login/mfa", json={"mfa_token": t3, "code": recovery[0]}).status_code == 401
     assert db.scalar(select(Notification).where(Notification.title.startswith("Recovery code used")))
+
+
+def test_known_ip_skips_the_code_new_ip_asks(app, client, db, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "trust_proxy_headers", True)
+    secret, _ = _enable_mfa(client)
+    office = {"X-Forwarded-For": "203.0.113.10"}
+
+    def sign_in(headers):
+        return TestClient(app).post("/api/auth/login", json={"email": "admin@trace.studio", "password": PASSWORD},
+                                    headers=headers)
+
+    first = sign_in(office)
+    assert first.json().get("mfa_required")  # never verified from here
+    c = TestClient(app)
+    c.post("/api/auth/login/mfa", json={"mfa_token": first.json()["mfa_token"], "code": _code(secret, 1)}, headers=office)
+    again = sign_in(office)
+    assert again.status_code == 200 and "user" in again.json() and "ts_session" in again.cookies  # no code this time
+    assert db.scalar(select(AuditLog).where(AuditLog.action == "auth.login").order_by(AuditLog.created_at.desc())
+                     ).data["method"] == "trusted_ip"
+    assert sign_in({"X-Forwarded-For": "198.51.100.7"}).json().get("mfa_required")  # a new address asks
+    # setting two-step up again forgets the trusted addresses
+    db.execute(update(User).values(totp_enabled_at=utcnow()))
+    db.commit()
+    assert sign_in(office).json().get("mfa_required")
 
 
 def test_mfa_enrolment_needs_password_and_a_valid_code(client):

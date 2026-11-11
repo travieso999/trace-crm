@@ -71,7 +71,7 @@ Two naming facts that will otherwise confuse you:
 | **AI Personalization**, **Website Audits** | **Placeholder pages only** (`components/not-available.tsx`). Tables exist (`ai_personalizations`, `website_audits`), no API or workers. |
 | Microsoft 365 mailboxes | Not built (provider value exists in the schema; no adapter) |
 | Docker / Caddy / production deployment | Not built (`infrastructure/` is empty). The app has never been deployed. |
-| Security hardening (2FA, lockout, idle timeout, export controls, alerts) | Done on branch **`security-hardening`**, **not merged**: it needs one additive migration applied to the live database first. See [§11](#11-security-model). |
+| Security hardening (2FA, lockout, export controls, alerts) | Merged into `team/multi-user` (2026-11-11), migration `5ca204ddd0e5`. See [§11](#11-security-model). |
 
 **Sending is gated.** `REAL_SENDING` is `test_only` on the owner's machine: real mail only goes to addresses in
 `ALLOWED_TEST_RECIPIENTS`. Do not change this without the owner's explicit approval (see [§7.2](#72-the-real_sending-gate)).
@@ -479,15 +479,16 @@ The frontend reads only `API_URL` (where to proxy `/api/*`, default `http://127.
 
 ## 11. Security model
 
-**On `main` (live today):**
+**Baseline:**
 
-- Sessions: random token in an `HttpOnly`, `SameSite=Lax` cookie; only its SHA-256 is stored; 12-hour TTL;
+- Sessions: random token in an `HttpOnly`, `SameSite=Lax` cookie; only its SHA-256 is stored; 30-day TTL (`SESSION_TTL_HOURS`);
   revoked on logout, password change and user deactivation. `load_session` re-checks `is_active` on every request.
 - CSRF: a per-session token, readable `ts_csrf` cookie, required as `X-CSRF-Token` on every unsafe method, compared
   in constant time.
 - Passwords: Argon2id, rehashed on login when parameters change. Login is rate limited per IP and per email, and
   timing is equalised for unknown users.
-- RBAC: viewer < member < admin, enforced server-side by dependencies on every route.
+- RBAC: viewer < member < admin, plus per-user permissions (`app/core/permissions.py`, `require_perm`), enforced
+  server-side on every route.
 - Secrets: OAuth tokens Fernet-encrypted at rest and never serialised; logs redact secrets.
 - Input/output: ORM-only SQL (no string-built queries; sort columns whitelisted); templates can't execute code;
   inbound HTML sanitised with `nh3` and shown in a sandboxed iframe; CSV exports escaped against formula injection;
@@ -495,14 +496,17 @@ The frontend reads only `API_URL` (where to proxy `/api/*`, default `http://127.
 - Headers: `nosniff`, `X-Frame-Options: DENY`, CSP on API responses and in `next.config.ts`, HSTS when
   `COOKIE_SECURE`. API docs (`/api/docs`, `/api/openapi.json`) are disabled in production.
 
-**On branch `security-hardening` (reviewed and tested, not merged):**
+**Security hardening (merged 2026-11-11):**
 
 - **Two-step verification** (TOTP + 10 single-use recovery codes): `app/core/mfa.py`,
   `components/security-settings.tsx`. Sign-in becomes password → signed 5-minute challenge → code.
-  `REQUIRE_ADMIN_MFA` (on by default in production) locks admin routes until the admin enrols.
+  `REQUIRE_ADMIN_MFA` (on by default in production) locks admin routes until the admin enrols. The code is skipped
+  when signing in from an IP where that person completed two-step within `MFA_TRUSTED_IP_DAYS` (90; read from the
+  `auth.login` audit entries since they last enrolled); a new address asks.
 - Account lockout: 8 failures per email (24 per IP) in 15 minutes → locked for 15 minutes.
-  Sessions also expire after 120 idle minutes.
-- Export is admin-only, 10 per hour, logged with its filters, and alerts admins.
+  No idle timeout by default (`SESSION_IDLE_MINUTES=0`, the owner's choice); set minutes to enable one.
+- Export needs the `prospects.export` permission (off for team members by default), 10 per hour, logged with its
+  filters, and alerts admins.
 - **Security alerts** go to admins through the Notification Center (`services/security_alerts.py`,
   `kind = "security"`).
 - `audit_logs` is append-only at the database level (trigger); there's a Security log in Settings.
@@ -511,8 +515,8 @@ The frontend reads only `API_URL` (where to proxy `/api/*`, default `http://127.
 - `tests/test_security.py` sweeps **every route** for session, role and CSRF enforcement. A new route that
   forgets its auth dependency fails the suite.
 
-To ship it: back up the database, run `alembic upgrade head` (one additive migration), merge into `main`, and
-restart. The owner has not yet approved this; ask them first.
+Deployed with `D:\Development\Tools\trace-deploy\deploy-team.ps1` (backs up, migrates, checks the production
+settings against the new code, deploys).
 
 **Open items:** the local embedded Postgres uses the `postgres` superuser with `trust` auth on 127.0.0.1 (fine
 for a single-user dev PC; production needs a dedicated role with a password). Backups are unencrypted until a

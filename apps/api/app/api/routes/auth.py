@@ -95,6 +95,18 @@ def _check_lockout(db: Session, request: Request, email: str, ip: str, user: Use
                         f"Too many failed sign-ins. Try again in {s.login_lockout_minutes} minutes.")
 
 
+def _trusted_ip(db: Session, user: User, ip: str) -> bool:
+    """Whether this person completed two-step verification from this IP address recently (and since they last set it
+    up), so the code can be skipped. A new address always asks."""
+    days = get_settings().mfa_trusted_ip_days
+    if days <= 0 or not ip or ip == "unknown" or user.totp_enabled_at is None:
+        return False
+    since = max(utcnow() - timedelta(days=days), user.totp_enabled_at)
+    return db.scalar(select(AuditLog.id).where(
+        AuditLog.user_id == user.id, AuditLog.action == "auth.login", AuditLog.ip_address == ip,
+        AuditLog.created_at > since, AuditLog.data["method"].astext.in_(("totp", "recovery"))).limit(1)) is not None
+
+
 def _start_session(db: Session, request: Request, response: Response, user: User, method: str) -> MeOut:
     user.last_login_at = utcnow()
     token, sess = create_session(db, user, client_ip(request), request.headers.get("user-agent"))
@@ -123,10 +135,10 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email, username or password")
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(body.password)
-    if user.mfa_enabled:
+    if user.mfa_enabled and not _trusted_ip(db, user, ip):
         db.commit()  # the challenge is bound to the (possibly rehashed) password
         return MfaChallengeOut(mfa_token=mfa.issue_challenge(user))
-    return _start_session(db, request, response, user, "password")
+    return _start_session(db, request, response, user, "trusted_ip" if user.mfa_enabled else "password")
 
 
 @router.post("/login/mfa", response_model=MeOut)

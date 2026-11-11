@@ -62,7 +62,8 @@ def load_session(db: Session, token: str | None) -> UserSession | None:
     if not sess.user.is_active or sess.user.deleted_at is not None:
         return None
     seen = sess.last_seen_at or sess.created_at
-    if seen <= now - timedelta(minutes=get_settings().session_idle_minutes):
+    idle = get_settings().session_idle_minutes
+    if idle > 0 and seen <= now - timedelta(minutes=idle):
         return None
     if seen <= now - SEEN_RESOLUTION:  # at most one write a minute per session
         db.execute(update(UserSession).where(UserSession.id == sess.id).values(last_seen_at=now))

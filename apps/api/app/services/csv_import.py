@@ -426,6 +426,23 @@ def export_contacts_csv(contacts: list[Contact]) -> str:
     return out.getvalue()
 
 
+def export_missing_names_csv(contacts: list[Contact]) -> str:
+    """Prospects with no first name, ready to have the names looked up. first_name / last_name come out blank to be
+    filled in; the headers map straight back on re-import. The name exactly as the upload had it is in
+    "original_text" (not a header the importer reads as a name, so re-importing never re-splits it)."""
+    out = io.StringIO()
+    cols = ["email", "first_name", "last_name", "company_name", "website", "job_title", "city", "state",
+            "linkedin_url", "original_text"]
+    writer = csv.writer(out)
+    writer.writerow(cols)
+    for c in contacts:
+        merge = template_variables(c)
+        writer.writerow([_csv_safe(v or "") for v in (
+            c.email, c.first_name, c.last_name, merge["company_name"], c.website, c.job_title, merge["city"],
+            merge["state"], c.linkedin_url, (c.custom_fields or {}).get("source_name"))])
+    return out.getvalue()
+
+
 def _csv_safe(value: str) -> str:
     """Neutralise spreadsheet formula injection."""
     if value and value[0] in "=+-@\t\r":

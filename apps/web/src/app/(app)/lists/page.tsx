@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Download, FileSpreadsheet, MoreHorizontal, Pencil, Send, Trash2, Upload, Users } from "lucide-react";
+import { Download, FileSpreadsheet, MoreHorizontal, Pencil, Send, Sparkles, Trash2, Upload, UserCheck, Users } from "lucide-react";
 import { cn } from "cn";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,11 +12,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConfirmDialog, EmptyState, ErrorState, Field, NativeSelect, PageHeader, StatusBadge } from "@/components/common";
-import { useCanWrite } from "@/components/app-shell";
+import { useCan, useCanWrite } from "@/components/app-shell";
 import { api, download, errorMessage } from "@/lib/api";
 import { dateTime, num, relTime } from "@/lib/format";
-import type { Campaign, EnrollResult, ImportList } from "@/lib/types";
+import type { Campaign, Contact, EnrollResult, ImportList, Page } from "@/lib/types";
 
 /** Add a whole imported list to a campaign: one click, no picking prospects one by one. */
 export function AddListToCampaignDialog({ list, onOpenChange }: { list: ImportList | null; onOpenChange: (o: boolean) => void }) {
@@ -140,10 +141,115 @@ function RenameDialog({ list, onOpenChange }: { list: ImportList | null; onOpenC
   );
 }
 
+const MISSING_PAGE = 200;
+
+/** Every prospect without a first name, from any upload, in one place: export it, have the names looked up (e.g. by
+ *  Claude), and upload the file back. A prospect leaves this tab as soon as it has a first name. */
+function MissingNames({ canWrite }: { canWrite: boolean }) {
+  const canExport = useCan("prospects.export");
+  const missing = useQuery({
+    queryKey: ["missing-names"],
+    queryFn: () => api<Page<Contact>>("/api/contacts", { query: { missing_name: "true", sort: "created_at", order: "desc", page_size: MISSING_PAGE } }),
+  });
+  const [exporting, setExporting] = React.useState(false);
+  async function exportMissing() {
+    setExporting(true);
+    try {
+      await download("/api/contacts/missing-names/export", undefined, "missing-names.csv");
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  if (missing.isError) return <ErrorState error={missing.error} onRetry={() => missing.refetch()} />;
+  if (missing.isPending) return <Skeleton className="h-40" />;
+  const { items, total } = missing.data;
+  if (total === 0)
+    return (
+      <EmptyState
+        icon={UserCheck}
+        title="Every prospect has a first name"
+        description="When an upload has rows without a usable first name (for example only a company name), they collect here so you can look the names up in one go."
+      />
+    );
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 rounded-xl border p-4 sm:flex sm:items-start sm:justify-between">
+        <div className="text-sm">
+          <p className="font-medium">
+            {num(total)} prospect{total === 1 ? "" : "s"} without a first name, so {"{{first_name}}"} can’t be used for them.
+          </p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
+            <li>Export the list. It has the email, company, website and the name exactly as uploaded, with blank first_name and last_name columns.</li>
+            <li>Give the file to Claude and ask it to fill in first_name and last_name, keeping every other column as it is.</li>
+            <li>
+              Upload the filled file and choose <span className="font-medium text-foreground">“Fill in their blank fields”</span> for prospects already in
+              Prospects. They leave this tab once they have a name.
+            </li>
+          </ol>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {canExport && (
+            <Button onClick={exportMissing} disabled={exporting}>
+              <Sparkles /> Export for Claude
+            </Button>
+          )}
+          {canWrite && (
+            <Link href="/prospects/import" className={cn(buttonVariants({ variant: "outline" }))}>
+              <Upload /> Upload filled file
+            </Link>
+          )}
+        </div>
+      </div>
+      <div className="rounded-xl border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Email</TableHead>
+              <TableHead>Company</TableHead>
+              <TableHead className="hidden md:table-cell">Name as uploaded</TableHead>
+              <TableHead className="hidden lg:table-cell">Website</TableHead>
+              <TableHead className="hidden md:table-cell">Added</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.map((c) => (
+              <TableRow key={c.id}>
+                <TableCell className="max-w-64">
+                  <Link href={`/prospects/${c.id}`} className="block truncate font-medium hover:underline">
+                    {c.email}
+                  </Link>
+                </TableCell>
+                <TableCell className="max-w-56 truncate">{c.company_name ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                <TableCell className="hidden max-w-56 truncate text-muted-foreground md:table-cell">{c.custom_fields?.source_name ?? "—"}</TableCell>
+                <TableCell className="hidden max-w-56 truncate text-muted-foreground lg:table-cell">{c.website ?? "—"}</TableCell>
+                <TableCell className="hidden text-muted-foreground md:table-cell" title={dateTime(c.created_at)}>
+                  {relTime(c.created_at)}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+      {total > items.length && (
+        <p className="text-xs text-muted-foreground">
+          Showing the newest {num(items.length)} of {num(total)}. The export includes all of them.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function ImportedListsPage() {
   const qc = useQueryClient();
   const canWrite = useCanWrite();
   const lists = useQuery({ queryKey: ["import-lists"], queryFn: () => api<ImportList[]>("/api/imports") });
+  const missingCount = useQuery({
+    queryKey: ["missing-names", "count"],
+    queryFn: () => api<{ total: number }>("/api/contacts/count", { query: { missing_name: "true" } }),
+  });
   const [adding, setAdding] = React.useState<ImportList | null>(null);
   const [renaming, setRenaming] = React.useState<ImportList | null>(null);
   const [deleting, setDeleting] = React.useState<ImportList | null>(null);
@@ -178,6 +284,15 @@ export default function ImportedListsPage() {
           )
         }
       />
+      <Tabs defaultValue="lists">
+        <TabsList variant="line" className="mb-4">
+          <TabsTrigger value="lists">Lists</TabsTrigger>
+          <TabsTrigger value="missing">Missing names{missingCount.data ? ` (${num(missingCount.data.total)})` : ""}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="missing">
+          <MissingNames canWrite={canWrite} />
+        </TabsContent>
+        <TabsContent value="lists">
       {lists.isError ? (
         <ErrorState error={lists.error} onRetry={() => lists.refetch()} />
       ) : lists.isPending ? (
@@ -289,6 +404,8 @@ export default function ImportedListsPage() {
           </Table>
         </div>
       )}
+        </TabsContent>
+      </Tabs>
       <AddListToCampaignDialog list={adding} onOpenChange={(o) => !o && setAdding(null)} />
       <RenameDialog list={renaming} onOpenChange={(o) => !o && setRenaming(null)} />
       <ConfirmDialog

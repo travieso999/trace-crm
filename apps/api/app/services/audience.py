@@ -24,6 +24,7 @@ class AudienceFilter(BaseModel):
     # "never": never added to any campaign; "previous": was in at least one campaign
     participation: Literal["never", "previous"] | None = None
     company_id: uuid.UUID | None = None
+    missing_name: bool | None = None  # no first name, so {{first_name}} can't be used
     custom: dict[str, str] = Field(default_factory=dict)  # custom field name -> value (case-insensitive match)
 
     @field_validator("custom")
@@ -81,6 +82,8 @@ def contacts_query(f: AudienceFilter) -> Select:
         stmt = stmt.where(Contact.id.in_(select(CampaignContact.contact_id)))
     if f.company_id:
         stmt = stmt.where(Contact.company_id == f.company_id)
+    if f.missing_name:
+        stmt = stmt.where(func.coalesce(func.trim(Contact.first_name), "") == "")
     for key, value in f.custom.items():
         stmt = stmt.where(func.lower(Contact.custom_fields[key].astext) == value.strip().lower())
     return stmt

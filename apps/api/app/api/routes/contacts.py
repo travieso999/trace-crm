@@ -43,6 +43,7 @@ from app.services.contacts import (
 from app.services.csv_import import (
     CsvError,
     export_contacts_csv,
+    export_missing_names_csv,
     file_fingerprint,
     import_rows,
     parse_upload,
@@ -77,10 +78,12 @@ def contact_filter(
     not_in_campaign_id: uuid.UUID | None = None,
     participation: str | None = Query(None, pattern="^(never|previous)$"),
     company_id: uuid.UUID | None = None,
+    missing_name: bool | None = None,
 ) -> AudienceFilter:
     return AudienceFilter(q=q, lead_status=lead_status, verification_status=verification_status, state=state,
                           city=city, industry=industry, tag=tag, batch_id=batch_id, campaign_id=campaign_id,
-                          not_in_campaign_id=not_in_campaign_id, participation=participation, company_id=company_id)
+                          not_in_campaign_id=not_in_campaign_id, participation=participation, company_id=company_id,
+                          missing_name=missing_name or None)
 
 
 def _out(db: Session, contacts: list[Contact]) -> list[ContactOut]:
@@ -152,6 +155,31 @@ def export_contacts(
         export_contacts_csv(contacts),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="prospects-{utcnow():%Y%m%d}.csv"'},
+    )
+
+
+@router.get("/missing-names/export")
+def export_missing_names(
+    request: Request,
+    user: User = Depends(require_perm("prospects.export")),
+    db: Session = Depends(get_db),
+):
+    """Prospects with no first name, with only the columns needed to look the name up (e.g. by asking Claude).
+    first_name / last_name are left blank to fill in; uploading the filled file with "Fill in their blank fields"
+    stores the names, and the prospects drop out of this list."""
+    if not ratelimit.hit(f"export:{user.id}", get_settings().export_limit_per_hour, 3600):
+        audit(db, user, "contacts.export_refused", "contact", None, request, reason="hourly limit")
+        db.commit()
+        raise HTTPException(429, "Export limit reached for this hour")
+    contacts = list(db.scalars(contacts_query(AudienceFilter(missing_name=True)).order_by(Contact.created_at).limit(100_000)))
+    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts), filters={"missing_name": "true"})
+    security_alerts.notify_admins(db, f"Prospects exported by {user.display_name}",
+                                  f"{user.display_name} downloaded {len(contacts)} prospect(s) with missing names as CSV.")
+    db.commit()
+    return Response(
+        export_missing_names_csv(contacts),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="missing-names-{utcnow():%Y%m%d}.csv"'},
     )
 
 

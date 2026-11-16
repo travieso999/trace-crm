@@ -219,3 +219,37 @@ def test_per_lead_personalized_preview(client, db):
     assert p["steps"][0]["ok"] is False and p["steps"][0]["missing"] == ["company_name"]
     assert p["steps"][1]["ok"] is True  # follow-up only needs first_name
     assert db.scalar(select(func.count()).select_from(SentMessage)) == 0
+
+
+def test_missing_names_collect_export_and_fill_back(client, db):
+    """Prospects uploaded without a usable first name collect in one list; exporting it, filling the names and
+    re-uploading with "fill in blank fields" stores them, and they leave the list."""
+    first = (b"Name,Company,Email\n"
+             b"Jane Doe,Doe Bail,jane@doebail.com\n"
+             b"Lone Star Bail Bonds LLC,Lone Star Bail Bonds,info@lonestarbail.com\n")
+    second = b"Email,Company\noffice@acmebail.com,Acme Bail\n"
+    assert _upload(client, first, "first.csv").status_code == 200
+    assert _upload(client, second, "second.csv").status_code == 200
+
+    # both uploads feed the same list; Jane has a name and stays out
+    assert client.get("/api/contacts/count", params={"missing_name": "true"}).json()["total"] == 2
+    listed = client.get("/api/contacts", params={"missing_name": "true"}).json()["items"]
+    assert sorted(c["email"] for c in listed) == ["info@lonestarbail.com", "office@acmebail.com"]
+
+    r = client.get("/api/contacts/missing-names/export")
+    assert r.status_code == 200 and "missing-names-" in r.headers["content-disposition"]
+    lines = r.text.strip().splitlines()
+    assert lines[0] == "email,first_name,last_name,company_name,website,job_title,city,state,linkedin_url,original_text"
+    assert any(line.startswith("info@lonestarbail.com,,,Lone Star Bail Bonds,") and
+               line.endswith("Lone Star Bail Bonds LLC") for line in lines)
+
+    # fill the names in (as Claude would) and upload the file back
+    filled = r.text.replace("info@lonestarbail.com,,", "info@lonestarbail.com,Maria,Garza").replace(
+        "office@acmebail.com,,", "office@acmebail.com,Tom,")
+    result = _upload(client, filled.encode(), "missing-names-filled.csv", duplicate_strategy="update")
+    assert result.status_code == 200, result.text
+    assert result.json()["updated"] == 2
+    assert client.get("/api/contacts/count", params={"missing_name": "true"}).json()["total"] == 0
+    maria = db.scalar(select(Contact).where(Contact.email == "info@lonestarbail.com"))
+    assert (maria.first_name, maria.last_name) == ("Maria", "Garza")
+    assert maria.custom_fields["source_name"] == "Lone Star Bail Bonds LLC"  # the original is not overwritten

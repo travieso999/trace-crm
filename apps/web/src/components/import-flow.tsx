@@ -283,6 +283,7 @@ export function ImportFlow({ campaignId, campaignName, onImported }: { campaignI
           description: r.enrollment ? `${num(r.enrollment.enrolled)} added to ${campaignName ?? "the campaign"}` : `${num(r.created)} new, ${num(r.updated)} updated`,
         });
         qc.invalidateQueries({ queryKey: ["import-lists"] });
+        qc.invalidateQueries({ queryKey: ["missing-names"] });
         if (campaignId) {
           for (const k of ["campaign", "campaign-leads", "campaign-preflight", "campaign-summary"]) qc.invalidateQueries({ queryKey: [k] });
         }

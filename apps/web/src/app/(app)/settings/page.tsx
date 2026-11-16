@@ -12,7 +12,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorState, Field, PageHeader } from "@/components/common";
 import { ScheduleEditor } from "@/components/schedule-editor";
 import { SecuritySettings } from "@/components/security-settings";
-import { useIsAdmin } from "@/components/app-shell";
+import { useCan, useIsAdmin } from "@/components/app-shell";
+import { WebsiteTrackingCard } from "@/components/website-tracking";
 import { SettingsNav } from "@/components/settings-nav";
 import { api, errorMessage } from "@/lib/api";
 import type { SettingsResponse } from "@/lib/types";
@@ -108,6 +109,7 @@ const checkbox = "size-4 accent-[var(--primary)]";
 
 export default function SettingsPage() {
   const isAdmin = useIsAdmin();
+  const canOutreach = useCan("outreach.access");
   const q = useQuery({ queryKey: ["settings"], queryFn: () => api<SettingsResponse>("/api/settings") });
   if (q.isError) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   if (q.isPending)
@@ -169,7 +171,7 @@ export default function SettingsPage() {
                 <input type="checkbox" className={`${checkbox} mt-0.5`} checked={d.open_tracking} onChange={(e) => set({ open_tracking: e.target.checked })} />
                 <span>Track opens (estimate)<span className="block text-xs text-muted-foreground">Adds a 1×1 image. Opens are unreliable (Apple Mail privacy, image proxies) and pixels can hurt deliverability.</span></span>
               </label>
-              <Field label="Demo links" htmlFor="t-demo" hint="One per line. Links starting with these count as the demo, e.g. “Watch 360° Demo”.">
+              <Field label="Demo links" htmlFor="t-demo" hint="One per line. Links starting with these count as the demo, e.g. “Watch 360° Demo”, and get the prospect's id added as ?rid= so trace-studio.tech can tell who visited.">
                 <Textarea id="t-demo" rows={2} className="font-mono text-[13px]" value={d.demo_urls.join("\n")}
                   onChange={(e) => set({ demo_urls: e.target.value.split("\n").map((u) => u.trim()) })} />
               </Field>
@@ -188,6 +190,7 @@ export default function SettingsPage() {
             </>
           )}
         </Section>
+        {canOutreach && <WebsiteTrackingCard />}
         <Section name="company" title="Company" value={s.company} readOnly={ro}>
           {(d, set) => (
             <>

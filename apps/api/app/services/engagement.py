@@ -6,6 +6,9 @@ Counting rules (shown in the UI too):
 * opens are estimates (image proxies and Apple Mail Privacy Protection) and exist only while open tracking is on;
 * a demo visit is an attributed demo session that reported at least one event; an interaction is any step beyond
   viewing a page (starting the application, a form, signing, submitting).
+* website batches from trace-studio.tech (services/site_tracking.py) add to these: a demo visit is a website session
+  with ``session_start`` or a page under /demos/; completed is ``application_completed``; watched video is
+  ``video_progress`` >= 75% or ``video_complete``; a ``callback_request`` makes the prospect High and puts them first.
 """
 
 import uuid
@@ -20,6 +23,7 @@ from app.models import (
     CampaignContact,
     Contact,
     Conversation,
+    CrmActivity,
     CrmOpportunity,
     CrmTask,
     DemoEvent,
@@ -28,10 +32,12 @@ from app.models import (
     ReceivedMessage,
     SentMessage,
     SequenceStep,
+    SiteEvent,
     TrackedLink,
     TrackingEvent,
     User,
 )
+from app.services import site_tracking
 from app.services.tracking import INTERACTIONS, human_click_filter
 
 L, E = TrackedLink, TrackingEvent
@@ -224,6 +230,21 @@ def _engaged_query(campaign_id: uuid.UUID | None):
         func.count(distinct(DemoEvent.demo_session_id)).filter(DemoEvent.type == "application_submitted").label("demo_completed"),
         func.max(DemoEvent.occurred_at).label("last_demo"),
     ).outerjoin(DemoEvent, DemoEvent.demo_session_id == DemoSession.id).where(DemoSession.contact_id.is_not(None))
+    S = SiteEvent  # noqa: N806
+    site_visit = or_(S.type == "session_start", and_(S.type == "page_view", S.page.like("/demos/%")))
+    watched = or_(S.type == "video_complete",
+                  and_(S.type == "video_progress", S.data["percent"].astext.in_(site_tracking.WATCHED_PERCENTS)))
+    site_interaction = or_(S.type.in_(site_tracking.INTERACTIONS),
+                           and_(S.type == "click", S.data["kind"].astext.in_(site_tracking.CONTACT_TAPS)))
+    web = select(
+        S.contact_id.label("cid"),
+        func.count(distinct(S.sid)).filter(site_visit).label("visits"),
+        func.count(distinct(S.sid)).filter(S.type == "application_completed").label("completed"),
+        func.count(distinct(S.sid)).filter(watched).label("watched"),
+        func.count(S.id).filter(site_interaction).label("interactions"),
+        func.max(S.occurred_at).filter(S.type == "callback_request").label("callback_at"),
+        func.max(S.occurred_at).label("last_site"),
+    ).where(S.contact_id.is_not(None))
     rep = select(
         ReceivedMessage.contact_id.label("cid"), func.count(ReceivedMessage.id).label("replies"),
         func.max(ReceivedMessage.received_at).label("last_reply"),
@@ -231,30 +252,35 @@ def _engaged_query(campaign_id: uuid.UUID | None):
     if campaign_id:
         clk = clk.where(E.campaign_id == campaign_id)
         dem = dem.where(DemoSession.campaign_id == campaign_id)
+        web = web.where(S.campaign_id == campaign_id)
         rep = rep.join(Conversation, Conversation.id == ReceivedMessage.conversation_id).where(
             Conversation.campaign_id == campaign_id)
     clk = clk.group_by(E.contact_id).subquery()
     dem = dem.group_by(DemoSession.contact_id).subquery()
     rep = rep.group_by(ReceivedMessage.contact_id).subquery()
-    ids = union(select(clk.c.cid), select(dem.c.cid), select(rep.c.cid)).subquery()
+    web = web.group_by(S.contact_id).subquery()
+    ids = union(select(clk.c.cid), select(dem.c.cid), select(rep.c.cid), select(web.c.cid)).subquery()
 
     n = lambda col: func.coalesce(col, 0)  # noqa: E731
+    visits = n(dem.c.demo_visits) + n(web.c.visits)
+    interactions = n(dem.c.demo_interactions) + n(web.c.interactions)
+    completed = n(dem.c.demo_completed) + n(web.c.completed)
     level = case(
-        (or_(n(dem.c.demo_interactions) > 0, n(dem.c.demo_completed) > 0), literal("high")),
-        (or_(n(clk.c.clicks) > 0, n(dem.c.demo_visits) > 0, n(rep.c.replies) > 0), literal("medium")),
+        (or_(interactions > 0, completed > 0, web.c.callback_at.is_not(None)), literal("high")),
+        (or_(n(clk.c.clicks) > 0, visits > 0, n(rep.c.replies) > 0, n(web.c.watched) > 0), literal("medium")),
         (n(clk.c.opens) > 0, literal("low")),
         else_=None,
     )
-    last = func.greatest(clk.c.last_click, clk.c.last_open, dem.c.last_demo, rep.c.last_reply)
+    last = func.greatest(clk.c.last_click, clk.c.last_open, dem.c.last_demo, rep.c.last_reply, web.c.last_site)
     open_tasks = select(func.count(CrmTask.id)).where(
         CrmTask.contact_id == Contact.id, CrmTask.completed_at.is_(None)).scalar_subquery()
     stmt = (
         select(
             Contact.id, Contact.first_name, Contact.last_name, Contact.email, Contact.company_name, Contact.lead_status,
             n(clk.c.clicks).label("clicks"), n(clk.c.demo_clicks).label("demo_clicks"), n(clk.c.opens).label("opens"),
-            n(dem.c.demo_visits).label("demo_visits"), n(dem.c.demo_interactions).label("demo_interactions"),
-            n(dem.c.demo_completed).label("demo_completed"), n(rep.c.replies).label("replies"),
-            last.label("last_engagement_at"), level.label("level"),
+            visits.label("demo_visits"), interactions.label("demo_interactions"),
+            completed.label("demo_completed"), n(web.c.watched).label("watched_video"), n(rep.c.replies).label("replies"),
+            web.c.callback_at.label("callback_at"), last.label("last_engagement_at"), level.label("level"),
             CrmOpportunity.owner_id, cast(open_tasks, Integer).label("open_tasks"),
         )
         .select_from(ids)
@@ -262,13 +288,14 @@ def _engaged_query(campaign_id: uuid.UUID | None):
         .outerjoin(clk, clk.c.cid == ids.c.cid)
         .outerjoin(dem, dem.c.cid == ids.c.cid)
         .outerjoin(rep, rep.c.cid == ids.c.cid)
+        .outerjoin(web, web.c.cid == ids.c.cid)
         .outerjoin(CrmOpportunity, CrmOpportunity.contact_id == Contact.id)
         .where(Contact.deleted_at.is_(None), level.is_not(None))
     )
     return stmt, level, last
 
 
-SORTS = ("last_engagement", "demo_clicks", "demo_visits", "demo_completed", "replies", "clicks")
+SORTS = ("last_engagement", "demo_clicks", "demo_visits", "demo_completed", "watched_video", "replies", "clicks")
 
 
 def engaged(db: Session, *, campaign_id: uuid.UUID | None = None, level: str | None = None,
@@ -295,7 +322,9 @@ def engaged(db: Session, *, campaign_id: uuid.UUID | None = None, level: str | N
     counts = dict(db.execute(select(sub.c.level, func.count()).group_by(sub.c.level)).all())
     key = sort if sort in SORTS else "last_engagement"
     col = sub.c.last_engagement_at if key == "last_engagement" else sub.c[key]
-    rows = db.execute(select(sub).order_by(col.desc().nulls_last(), sub.c.last_engagement_at.desc().nulls_last())
+    # a prospect who asked for a call back is always first, whatever the sort
+    rows = db.execute(select(sub).order_by(sub.c.callback_at.desc().nulls_last(), col.desc().nulls_last(),
+                                           sub.c.last_engagement_at.desc().nulls_last())
                       .offset((page - 1) * page_size).limit(page_size)).all()
     owners = {u.id: u.display_name for u in db.scalars(
         select(User).where(User.id.in_({r.owner_id for r in rows if r.owner_id})))} if rows else {}
@@ -305,8 +334,9 @@ def engaged(db: Session, *, campaign_id: uuid.UUID | None = None, level: str | N
             "contact_id": str(r.id), "name": _name(r), "email": r.email, "company": r.company_name,
             "lead_status": r.lead_status, "level": r.level, "clicks": r.clicks, "demo_clicks": r.demo_clicks,
             "opens": r.opens, "demo_visits": r.demo_visits, "demo_interactions": r.demo_interactions,
-            "demo_completed": r.demo_completed, "replies": r.replies,
-            "last_engagement_at": _iso(r.last_engagement_at), "campaigns": campaigns.get(r.id, []),
+            "demo_completed": r.demo_completed, "watched_video": r.watched_video, "replies": r.replies,
+            "callback_requested_at": _iso(r.callback_at), "last_engagement_at": _iso(r.last_engagement_at),
+            "campaigns": campaigns.get(r.id, []),
             "owner": {"id": str(r.owner_id), "name": owners.get(r.owner_id, "Former user")} if r.owner_id else None,
             "open_tasks": r.open_tasks or 0,
         } for r in rows],
@@ -388,8 +418,13 @@ def timeline(db: Session, contact_id: uuid.UUID, *, raw: bool = False) -> dict:
                         .outerjoin(Conversation, Conversation.id == ReceivedMessage.conversation_id)
                         .where(ReceivedMessage.contact_id == contact_id, ReceivedMessage.kind == "reply")):
         add("email_replied", r.received_at, f"Replied: “{r.subject or '(no subject)'}”", r.campaign_id)
+    # website milestones (one line each, written at ingest by site_tracking._milestone and apply_identify)
+    for a in db.scalars(select(CrmActivity).where(CrmActivity.contact_id == contact_id, CrmActivity.type.like("site_%"))):
+        d = a.data or {}
+        add(a.type, a.created_at, a.summary, uuid.UUID(d["campaign_id"]) if d.get("campaign_id") else None,
+            site=d.get("site"), page=d.get("page"))
     items.sort(key=lambda i: i["at"], reverse=True)
-    out = {"items": items, "level": level_for(db, contact_id)}
+    out = {"items": items, "level": level_for(db, contact_id), "visits": site_tracking.visits(db, contact_id)}
     if raw:
         out["raw"] = _raw(db, contact_id, camp)
     return out
@@ -407,4 +442,9 @@ def _raw(db: Session, contact_id: uuid.UUID, camp: dict) -> list[dict]:
         events.append({"source": "demo", "type": d.type, "at": d.occurred_at.isoformat(), "page": d.page,
                        "form": d.form, "step": d.step, "sample": d.sample, "signed": d.signed,
                        "user_agent": d.user_agent, "campaign": camp.get(d.campaign_id)})
+    for s in db.scalars(select(SiteEvent).where(SiteEvent.contact_id == contact_id)
+                        .order_by(SiteEvent.occurred_at.desc()).limit(500)):
+        events.append({"source": "site", "type": s.type, "at": s.occurred_at.isoformat(), "page": s.page, "site": s.site,
+                       "data": s.data, "place": ", ".join(p for p in (s.city, s.region, s.country) if p) or None,
+                       "user_agent": s.user_agent, "campaign": camp.get(s.campaign_id)})
     return sorted(events, key=lambda x: x["at"], reverse=True)

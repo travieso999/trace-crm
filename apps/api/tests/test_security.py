@@ -27,7 +27,9 @@ PUBLIC = {("POST", "/api/auth/login"), ("POST", "/api/auth/login/mfa"), ("POST",
           ("GET", "/api/cron/engine"), ("GET", "/u/thumb/{token}"),
           # tracked email links, the open pixel and demo step reports: opened by prospects, never signed in
           ("GET", "/t/{token}"), ("HEAD", "/t/{token}"), ("GET", "/t/o/{name}"),
-          ("POST", "/api/track/demo"), ("OPTIONS", "/api/track/demo")}
+          ("POST", "/api/track/demo"), ("OPTIONS", "/api/track/demo"),
+          # trace-studio.tech's server: needs "Authorization: Bearer <TRACKING_WEBHOOK_SECRET>" (401 otherwise, 503 unset)
+          ("POST", "/api/track/site-events")}
 # writes any signed-in user may make about themselves
 SELF_SERVICE = {"/api/auth/logout", "/api/auth/password", "/api/auth/sessions/revoke-others", "/api/auth/mfa/setup",
                 "/api/auth/mfa/enable", "/api/auth/mfa/disable", "/api/auth/mfa/recovery-codes",

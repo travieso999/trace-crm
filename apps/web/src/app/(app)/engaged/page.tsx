@@ -3,7 +3,7 @@
 import * as React from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Flame, ListPlus, NotebookPen, Search } from "lucide-react";
+import { Flame, ListPlus, NotebookPen, PhoneCall, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -21,7 +21,8 @@ import type { Campaign, EngagedPage, EngagedProspect, EngagementLevel, Stage } f
 const PAGE_SIZE = 50;
 const SORTS: [string, string][] = [
   ["last_engagement", "Most recent engagement"], ["demo_clicks", "Demo clicks"], ["demo_visits", "Demo visits"],
-  ["demo_completed", "Completed demo applications"], ["replies", "Replies"], ["clicks", "All clicks"],
+  ["demo_completed", "Completed demo applications"], ["watched_video", "Watched the video"], ["replies", "Replies"],
+  ["clicks", "All clicks"],
 ];
 
 function Count({ n, strong }: { n: number; strong?: boolean }) {
@@ -78,7 +79,7 @@ export default function EngagedProspectsPage() {
   return (
     <>
       <PageHeader title="Engaged Prospects"
-        description="Prospects who did something measurable after your emails. These are engagement signals, not proof of buying intent." />
+        description="Prospects who did something measurable after your emails or on trace-studio.tech. Anyone who asked for a call back is listed first. These are engagement signals, not proof of buying intent." />
 
       <div role="tablist" aria-label="Engagement level" className="mb-3 flex flex-wrap gap-1.5">
         {(["", "high", "medium", "low"] as const).map((lv) => {
@@ -122,7 +123,7 @@ export default function EngagedProspectsPage() {
         <Skeleton className="h-64" />
       ) : data!.items.length === 0 ? (
         <EmptyState icon={Flame} title={filtered ? "No matches" : "No engaged prospects yet"}
-          description={filtered ? undefined : "Prospects appear here when they click a tracked link, use the demo or reply. Emails sent before click tracking started can't show clicks."} />
+          description={filtered ? undefined : "Prospects appear here when they click a tracked link, visit or use the demo on trace-studio.tech, or reply. Emails sent before click tracking started can't show clicks."} />
       ) : (
         <>
           <div className="overflow-x-auto rounded-xl border">
@@ -134,6 +135,7 @@ export default function EngagedProspectsPage() {
                   <TableHead className="text-right">Demo clicks</TableHead>
                   <TableHead className="hidden sm:table-cell text-right">Demo visits</TableHead>
                   <TableHead className="text-right">Completed</TableHead>
+                  <TableHead className="hidden sm:table-cell text-right" title="Watched at least 75% of the demo video">Watched video</TableHead>
                   <TableHead className="hidden md:table-cell text-right">Replies</TableHead>
                   <TableHead className="hidden lg:table-cell">Latest engagement</TableHead>
                   <TableHead className="hidden xl:table-cell">Campaigns</TableHead>
@@ -149,11 +151,18 @@ export default function EngagedProspectsPage() {
                         {p.name || p.email}
                       </button>
                       <div className="truncate text-xs text-muted-foreground">{p.name ? p.email : null}{p.company && ` · ${p.company}`}</div>
+                      {p.callback_requested_at && (
+                        <div className="mt-0.5 inline-flex items-center gap-1 rounded-full bg-signal/15 px-2 py-0.5 text-xs font-medium text-signal"
+                          title={`Asked for a call back ${etTime(p.callback_requested_at)}`}>
+                          <PhoneCall className="size-3" aria-hidden /> Call back requested
+                        </div>
+                      )}
                     </TableCell>
                     <TableCell><LevelBadge level={p.level} /></TableCell>
                     <TableCell className="text-right"><Count n={p.demo_clicks} /></TableCell>
                     <TableCell className="hidden text-right sm:table-cell"><Count n={p.demo_visits} /></TableCell>
                     <TableCell className="text-right"><Count n={p.demo_completed} strong /></TableCell>
+                    <TableCell className="hidden text-right sm:table-cell"><Count n={p.watched_video} /></TableCell>
                     <TableCell className="hidden text-right md:table-cell"><Count n={p.replies} /></TableCell>
                     <TableCell className="hidden whitespace-nowrap text-sm lg:table-cell">{etTime(p.last_engagement_at)}</TableCell>
                     <TableCell className="hidden max-w-48 truncate text-sm text-muted-foreground xl:table-cell">

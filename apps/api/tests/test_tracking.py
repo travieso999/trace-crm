@@ -48,6 +48,10 @@ def _send(client, db, emails):
     return cid, dict(zip(emails, ids, strict=True))
 
 
+def with_rid(url: str, contact_id) -> str:
+    return url.replace("#tour", f"&rid={contact_id}#tour")
+
+
 def _links(db, contact_id, kind=None):
     stmt = select(TrackedLink).where(TrackedLink.contact_id == contact_id, TrackedLink.kind != "open_pixel")
     if kind:
@@ -76,7 +80,8 @@ def test_three_recipients_get_their_own_links_and_unsubscribe_is_untouched(clien
     for contact_id in ids.values():
         links = _links(db, contact_id)
         assert [(link.kind, link.destination_url, link.label) for link in links] == [
-            ("demo", DEMO, "Watch 360° Demo"), ("link", SITE, "our work")]
+            # demo links carry the prospect's id for trace-studio.tech's own tracking; other links are untouched
+            ("demo", with_rid(DEMO, contact_id), "Watch 360° Demo"), ("link", SITE, "our work")]
         tokens |= {link.token for link in links}
         assert all(link.sent_message_id for link in links)
     assert len(tokens) == 6  # never shared between recipients or links
@@ -249,7 +254,7 @@ def test_opted_out_prospects_still_reach_the_page_but_nothing_is_recorded(client
     db.add(SuppressionEntry(email="a@one.com", reason="unsubscribe"))
     db.commit()
     r = _click(visitor, _links(db, ids["a@one.com"], "demo")[0].token)
-    assert r.status_code == 302 and r.headers["location"] == DEMO
+    assert r.status_code == 302 and r.headers["location"] == with_rid(DEMO, ids["a@one.com"])
     assert db.scalar(select(func.count()).select_from(TrackingEvent)) == 0
 
 

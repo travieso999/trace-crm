@@ -126,3 +126,59 @@ class DemoEvent(UUIDPk, Base):
     signed: Mapped[bool | None] = mapped_column(Boolean)
     user_agent: Mapped[str | None] = mapped_column(String(300))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class SiteVisitor(UUIDPk, Base):
+    """A browser on trace-studio.tech, as reported by the website's server (``POST /api/track/site-events``).
+
+    ``vid`` is the website's own persistent visitor id. ``contact_id`` is set once the visitor is known: from ``rid``
+    (the prospect id carried by the campaign link) or from an ``identify`` event whose email or phone matches a
+    prospect. Name, email and phone are what the visitor typed into a website form about themselves."""
+
+    __tablename__ = "site_visitors"
+
+    vid: Mapped[str] = mapped_column(String(64), unique=True)
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="SET NULL"), index=True)
+    rid: Mapped[str | None] = mapped_column(String(100))  # last recipient id seen, even when it matched nobody
+    name: Mapped[str | None] = mapped_column(String(200))
+    email: Mapped[str | None] = mapped_column(String(320), index=True)
+    phone: Mapped[str | None] = mapped_column(String(60))
+    city: Mapped[str | None] = mapped_column(String(120))
+    region: Mapped[str | None] = mapped_column(String(120))
+    country: Mapped[str | None] = mapped_column(String(8))
+    device: Mapped[str | None] = mapped_column(String(80))
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    event_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SiteEvent(UUIDPk, Base):
+    """One step a visitor took on trace-studio.tech (demo video page, live demos). ``data`` holds only the keys the
+    tracking spec lists for the event type; typed values, card/bank/PIN/password content and anything else are never
+    stored. ``dedupe_key`` makes a retried batch a no-op."""
+
+    __tablename__ = "site_events"
+    __table_args__ = (
+        Index("ix_site_events_contact_time", "contact_id", "occurred_at"),
+        Index("ix_site_events_visitor_time", "visitor_id", "occurred_at"),
+    )
+
+    dedupe_key: Mapped[str] = mapped_column(String(64), unique=True)
+    visitor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("site_visitors.id", ondelete="CASCADE"))
+    sid: Mapped[str] = mapped_column(String(64), index=True)  # the website's session id (30 minutes of inactivity)
+    rid: Mapped[str | None] = mapped_column(String(100))
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"))
+    campaign_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("campaigns.id", ondelete="SET NULL"), index=True)
+    type: Mapped[str] = mapped_column(String(40))
+    site: Mapped[str | None] = mapped_column(String(80))
+    page: Mapped[str | None] = mapped_column(String(300))
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    city: Mapped[str | None] = mapped_column(String(120))
+    region: Mapped[str | None] = mapped_column(String(120))
+    country: Mapped[str | None] = mapped_column(String(8))
+    device: Mapped[str | None] = mapped_column(String(80))  # "iPhone · Safari", never the full user agent
+    user_agent: Mapped[str | None] = mapped_column(String(300))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

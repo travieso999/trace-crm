@@ -40,7 +40,8 @@ DEFAULTS: dict[str, dict] = {
         "click_tracking": True,
         "open_tracking": False,
         # links whose address starts with one of these count as the demo ("Watch 360° Demo" and the video block)
-        "demo_urls": ["https://trace-studio.tech/demos/ellison-reyes"],
+        # (each gets ?rid=<prospect id> added in campaign emails, so the website can tell who it is)
+        "demo_urls": ["https://trace-studio.tech/demos/ellison-reyes", "https://trace-studio.tech/demo"],
         # sites allowed to report demo steps to /api/track/demo
         "demo_origins": ["https://trace-studio.tech"],
         # a click this soon after the email was accepted is almost always a security scanner

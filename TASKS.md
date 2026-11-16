@@ -131,6 +131,26 @@ Legend: [x] done & verified · [~] implemented, awaiting external verification �
 - [ ] Demo site changes (not in this repo): add `trace-attribution.js` and the three one-line hooks
 - [ ] Run `attribution-check` against production for the 2026-11-16 10:02 ET submission
 
+## Website tracking from trace-studio.tech (2026-11-16, branch team/multi-user)
+- [x] `{{recipient_id}}` template variable (= contacts.id); every Demo link in a campaign email gets `rid=<id>` added
+      before click tracking; `https://trace-studio.tech/demo` added to Settings → Tracking → Demo links (default and,
+      by migration, saved lists)
+- [x] `POST /api/track/site-events`: Bearer TRACKING_WEBHOOK_SECRET (401/503), spec validation (422), up to 60 events,
+      per-event content hash (retries store nothing), spec-listed data keys only, events with card/bank/PIN/password
+      content dropped. Match by rid → known vid → identify email/phone; unmatched kept under the visitor and linked later.
+      Migration b9d4e2a7c315 (2 additive tables)
+- [x] identify fills in/updates name and phone; a different email is kept as custom field `website_email` (the address
+      campaigns send to is not replaced)
+- [x] Engaged Prospects: demo visits / completed include website sessions, new Watched video column and sort,
+      callback_request → High, listed first, "Call back requested" badge, bell notice (kind `callback_request`) to admins +
+      owner; website application_completed → demo-completed notice
+- [x] Engagement tab: website milestones in the timeline + "Website visits" (each step in order, page, time on page,
+      place, device); CRM activity lines `site_*`; Settings → Tracking card with webhook URL, secret (admins), email link,
+      last batch, unmatched visitors
+- [ ] Set TRACKING_WEBHOOK_SECRET on the API Vercel project, run migration b9d4e2a7c315 on Neon, deploy the API
+- [ ] Website Vercel project: TRACKING_WEBHOOK_URL + TRACKING_WEBHOOK_SECRET; campaign video link →
+      `https://trace-studio.tech/demo?rid={{recipient_id}}`
+
 ## Phase F — not started
 - [ ] AI personalization (generation, evidence, approval → {{custom_intro}}), AI reply classification
 - [ ] Website audits (SSRF-safe fetcher, checks, batch runs)

@@ -2,8 +2,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
-  Archive, ArrowRightLeft, Bell, CheckCircle2, CircleDot, History, ListPlus, Mail, MessageSquareReply, NotebookPen, Pencil,
-  RotateCcw, Sparkles, Trash2, UserRoundCheck, UserRoundPen,
+  Archive, ArrowRightLeft, Bell, CheckCircle2, CircleDot, ClipboardCheck, ClipboardPen, Eye, FileSignature, Globe, History,
+  ListPlus, Mail, MessageSquareReply, NotebookPen, Pencil, Phone, PhoneCall, PlayCircle, RotateCcw, Sparkles, Trash2,
+  UserRoundCheck, UserRoundPen,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,6 +19,10 @@ const ICONS: Record<string, LucideIcon> = {
   task: ListPlus, note: NotebookPen, note_edited: Pencil, note_archived: Archive, note_restored: RotateCcw,
   email_sent: Mail, reply: MessageSquareReply, reminder: Bell,
   owner_change: UserRoundCheck, opportunity_created: Sparkles,
+  // trace-studio.tech (website tracking)
+  site_visit: Globe, site_demo_opened: Eye, site_video_watched: PlayCircle, site_application_started: ClipboardPen,
+  site_application_completed: FileSignature, site_callback_request: PhoneCall, site_contact_tap: Phone,
+  site_demo_form: ClipboardCheck, site_identify: UserRoundPen,
 };
 
 export function ActivityTab({ contactId }: { contactId: string }) {

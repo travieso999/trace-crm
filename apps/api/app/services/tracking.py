@@ -41,6 +41,7 @@ from app.models import (
     Notification,
     ScheduledMessage,
     SentMessage,
+    SiteEvent,
     TrackedLink,
     TrackingEvent,
     User,
@@ -194,6 +195,46 @@ def _apply(db: Session, rendered: Rendered, sm: ScheduledMessage, contact_id: uu
         out_html = out_html[:-6] + pixel + "</div>" if out_html.endswith("</div>") else out_html + pixel
     db.flush()
     return Rendered(subject=rendered.subject, text=out_text, html=out_html)
+
+
+RECIPIENT_PARAM = "rid"
+
+
+def with_recipient(url: str, recipient_id: str) -> str:
+    """``url`` with ``rid=<recipient_id>`` appended, unless it already has a rid (e.g. from {{recipient_id}}). Only
+    appends: the existing query string and fragment stay byte for byte."""
+    parts = urlsplit(url)
+    if any(k == RECIPIENT_PARAM for k, _ in parse_qsl(parts.query, keep_blank_values=True)):
+        return url
+    query = f"{parts.query}&" if parts.query else ""
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, f"{query}{RECIPIENT_PARAM}={recipient_id}", parts.fragment))
+
+
+def add_recipient_id(db: Session, rendered: Rendered, contact_id: uuid.UUID) -> Rendered:
+    """Every demo link (Settings → Tracking → Demo links) in a campaign email carries the prospect's id as ``rid``, so
+    trace-studio.tech can report the visit for the right prospect. Runs before click tracking, which then stores
+    the link with its rid as the destination. Never stops an email."""
+    try:
+        prefixes = settings_for(db).get("demo_urls") or []
+    except Exception:
+        logger.exception("demo links not read; recipient ids not added")
+        return rendered
+    if not prefixes:
+        return rendered
+    rid = str(contact_id)
+
+    def fix(url: str) -> str:
+        return with_recipient(url, rid) if is_demo_url(url, prefixes) else url
+
+    def href(m: re.Match) -> str:
+        url = html.unescape(m.group(2))
+        new = fix(url)
+        if new == url:
+            return m.group(0)
+        return f'<a{m.group(1)}href="{html.escape(new, quote=True)}"{m.group(3)}>{m.group(4)}</a>'
+
+    return Rendered(subject=rendered.subject, text=TEXT_URL.sub(lambda m: fix(m.group(0)), rendered.text),
+                    html=HREF.sub(href, rendered.html))
 
 
 def attach_sent(db: Session, scheduled_message_id: uuid.UUID, sent_message_id: uuid.UUID) -> None:
@@ -446,6 +487,7 @@ def purge(db: Session, now: datetime | None = None) -> dict:
         "tracking_events": db.execute(delete(TrackingEvent).where(TrackingEvent.occurred_at < cutoff)).rowcount,
         "demo_events": db.execute(delete(DemoEvent).where(DemoEvent.occurred_at < cutoff)).rowcount,
         "demo_sessions": db.execute(delete(DemoSession).where(DemoSession.expires_at < cutoff)).rowcount,
+        "site_events": db.execute(delete(SiteEvent).where(SiteEvent.occurred_at < cutoff)).rowcount,
     }
     return {k: v for k, v in out.items() if v}
 

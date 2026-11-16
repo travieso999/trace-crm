@@ -69,6 +69,8 @@ erDiagram
 | `tracking_events` | Raw click/open ledger incl. suspected scanners (`suspected_bot`, `bot_reasons`, `verified_human`); keyed IP hash, never the IP | idx `(contact_id, occurred_at)`, `(link_id, occurred_at)`; purged after `tracking.retention_days` |
 | `demo_sessions` | A demo visit that arrived through a tracked demo link; random `token` held by the demo page | unique `token`; 30-day expiry |
 | `demo_events` | Demo steps (page view, application started/step/signed/submitted, other forms). Never what the visitor typed | idx `(contact_id, occurred_at)`; purged with tracking events |
+| `site_visitors` | A browser on trace-studio.tech (website's `vid`), matched to a prospect by `rid` or an `identify` email/phone; the name/email/phone the visitor typed about themselves | unique `vid`; `contact_id` set once known (earlier events are then moved to the prospect) |
+| `site_events` | Every step the website forwards (`POST /api/track/site-events`): type, site, page, spec-listed `data` keys only, place, short device name. Never card/bank/PIN/password content | unique `dedupe_key` (content hash: a retried batch adds nothing); idx `(contact_id, occurred_at)`, `(visitor_id, occurred_at)`, `sid`; purged with tracking events |
 
 ## Status enums
 

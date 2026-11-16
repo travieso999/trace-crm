@@ -14,7 +14,7 @@ PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z][a-zA-Z0-9_]*)\s*(?:\|([^{}]*))?\}\}"
 URL = re.compile(r"(https?://[^\s<>\"']+)")
 STANDARD_VARIABLES = [
     "first_name", "last_name", "full_name", "email", "company_name", "city", "state", "website",
-    "job_title", "industry", "phone", "custom_intro",
+    "job_title", "industry", "phone", "custom_intro", "recipient_id",
 ]
 
 

@@ -151,7 +151,7 @@ def render_step(db: Session, campaign: Campaign, step: SequenceStep, cc: Campaig
     )
     if threaded:
         rendered.subject = " ".join(subject_tpl.split())  # already-rendered subject of step 1
-    return rendered
+    return tracking.add_recipient_id(db, rendered, contact.id)
 
 
 # --- dispatch -------------------------------------------------------------------------------------

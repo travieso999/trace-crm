@@ -91,6 +91,9 @@ class Settings(BaseSettings):
 
     # Bearer secret for GET /api/cron/engine (Vercel Cron and the external per-minute pinger). Endpoint is off when unset.
     cron_secret: str | None = None
+    # Bearer secret trace-studio.tech sends with every tracking batch (POST /api/track/site-events). The same value
+    # goes in the website's TRACKING_WEBHOOK_SECRET. The endpoint answers 503 while it is unset.
+    tracking_webhook_secret: str | None = None
 
     @field_validator("database_url")
     @classmethod
@@ -161,6 +164,8 @@ class Settings(BaseSettings):
             problems.append("SECRET_KEY must be at least 32 characters")
         if self.cron_secret is not None and len(self.cron_secret) < 32:
             problems.append("CRON_SECRET must be at least 32 characters")
+        if self.tracking_webhook_secret is not None and len(self.tracking_webhook_secret) < 32:
+            problems.append("TRACKING_WEBHOOK_SECRET must be at least 32 characters")
         if self.is_production:
             if not self.cookie_secure:
                 problems.append("COOKIE_SECURE must be true in production")

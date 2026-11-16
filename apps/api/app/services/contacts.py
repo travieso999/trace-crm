@@ -180,6 +180,8 @@ def template_variables(contact: Contact) -> dict[str, str]:
         "job_title": contact.job_title or "",
         "industry": contact.industry or "",
         "phone": contact.phone or "",
+        # the prospect's id, for links the website tracks: https://trace-studio.tech/demo?rid={{recipient_id}}
+        "recipient_id": str(contact.id) if contact.id else "",
     }
     for k, v in (contact.custom_fields or {}).items():
         vars_.setdefault(k, str(v) if v is not None else "")

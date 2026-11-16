@@ -104,6 +104,13 @@ demo site.
 3. The demo posts step events to `POST /api/track/demo` (allowed origins only; unknown tokens ignored; always 204).
    An interaction proves the click was human (`verified_human`).
 4. Deduplicated timeline lines go to `crm_activities`; raw events are purged after `retention_days`.
+5. Website tracking (`services/site_tracking.py`): campaign demo links carry `rid=<contacts.id>` (`{{recipient_id}}`, or
+   added automatically to any Demo link). trace-studio.tech records each step in the browser and its server forwards
+   batches to `POST /api/track/site-events` with `Authorization: Bearer <TRACKING_WEBHOOK_SECRET>` (401 otherwise; 503
+   while unset). Batches match a prospect by `rid`, an earlier match of the same `vid`, or an `identify` email/phone;
+   unmatched ones wait under the visitor. Only spec-listed keys are kept, events with payment/password content are
+   dropped, a content hash dedupes retries. Engaged Prospects counts website demo visits, completed applications and
+   watched video; a `callback_request` makes the prospect High, lists them first and notifies admins and the owner.
 
 `/t/*` must reach the API: Next rewrites it in development and on Vercel; a reverse proxy in front of both must route
 `/t/*` like `/api/*` and `/u/*`.

@@ -653,7 +653,8 @@ export type ActivityItem = { id: string; type: string; summary: string; at: stri
 
 export type AppNotification = {
   id: string;
-  kind: "task_reminder" | "task_overdue" | "security" | "mailbox" | "assignment" | "demo_completed" | "suppression";
+  kind: "task_reminder" | "task_overdue" | "security" | "mailbox" | "assignment" | "demo_completed" | "suppression"
+    | "callback_request";
   title: string;
   body: string | null;
   contact_id: string | null;
@@ -780,7 +781,8 @@ export type EngagementLevel = "high" | "medium" | "low";
 export type EngagedProspect = {
   contact_id: string; name: string; email: string; company: string | null; lead_status: string; level: EngagementLevel;
   clicks: number; demo_clicks: number; opens: number; demo_visits: number; demo_interactions: number;
-  demo_completed: number; replies: number; last_engagement_at: string | null; campaigns: { id: string; name: string }[];
+  demo_completed: number; watched_video: number; replies: number; callback_requested_at: string | null;
+  last_engagement_at: string | null; campaigns: { id: string; name: string }[];
   owner: { id: string; name: string } | null; open_tasks: number;
 };
 
@@ -788,15 +790,40 @@ export type EngagedPage = Page<EngagedProspect> & { levels: Record<EngagementLev
 
 export type TimelineItem = {
   kind: "email_sent" | "email_opened" | "email_click" | "demo_click" | "demo_visit" | "demo_application_started"
-    | "demo_application_completed" | "demo_form" | "email_replied";
+    | "demo_application_completed" | "demo_form" | "email_replied"
+    | "site_visit" | "site_demo_opened" | "site_video_watched" | "site_application_started" | "site_application_completed"
+    | "site_callback_request" | "site_contact_tap" | "site_demo_form" | "site_identify";
   at: string; summary: string; campaign_id: string | null; campaign: string | null;
   url?: string | null; count?: number; sample?: boolean | null; signed?: boolean | null;
+  site?: string | null; page?: string | null;
+};
+
+/** One step of a website visit, in plain words ("Watched 75% of the video"). */
+export type SiteStep = {
+  at: string; type: string; text: string; site: string | null; page: string | null; strong: boolean;
+  seconds: number | null; scroll: number | null;
+};
+
+/** One visit (website session) to trace-studio.tech: steps in the order they happened. */
+export type SiteVisit = {
+  sid: string; started_at: string; ended_at: string; sites: string[]; city: string | null; region: string | null;
+  country: string | null; device: string | null; active_seconds: number | null; steps: SiteStep[]; events: number;
+};
+
+export type SiteTrackingStatus = {
+  endpoint: string; configured: boolean; secret: string | null; last_received_at: string | null; events: number;
+  visitors: number; matched_visitors: number;
+  unmatched: { vid: string; rid: string | null; name: string | null; email: string | null; phone: string | null;
+               city: string | null; region: string | null; device: string | null; events: number; last_seen_at: string }[];
 };
 
 export type RawTrackingEvent = {
-  source: "email" | "demo"; type: string; at: string; campaign: string | null; user_agent: string | null;
+  source: "email" | "demo" | "site"; type: string; at: string; campaign: string | null; user_agent: string | null;
+  site?: string | null; place?: string | null; data?: Record<string, unknown>;
   link?: string | null; url?: string | null; suspected_bot?: boolean; verified_human?: boolean; reasons?: string[];
   page?: string | null; form?: string | null; step?: number | null; sample?: boolean | null; signed?: boolean | null;
 };
 
-export type EngagementTimeline = { items: TimelineItem[]; level: EngagementLevel | null; raw?: RawTrackingEvent[] };
+export type EngagementTimeline = {
+  items: TimelineItem[]; level: EngagementLevel | null; visits: SiteVisit[]; raw?: RawTrackingEvent[];
+};

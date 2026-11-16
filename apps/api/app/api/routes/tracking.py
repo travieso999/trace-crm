@@ -4,21 +4,25 @@ Public (no session):
 * ``GET|HEAD /t/<token>``      tracked link: record, then 302 to the stored destination (never to a URL from the request)
 * ``GET /t/o/<token>.gif``     open pixel (only present in emails while open tracking is on)
 * ``POST /api/track/demo``     demo step from an allowed demo origin; always 204 so it reveals nothing
+* ``POST /api/track/site-events``  batches forwarded server to server by trace-studio.tech
+                                   (``Authorization: Bearer <TRACKING_WEBHOOK_SECRET>``; 401 otherwise)
 
 Signed in:
 * ``GET /api/tracking/emails``                      Email Tracking table (Outreach permission)
 * ``GET /api/tracking/engaged``                     Engaged Prospects (opportunities permission)
 * ``GET /api/tracking/contacts/<id>/timeline``      a prospect's engagement history; ``raw=true`` adds every event
+* ``GET /api/tracking/site``                        website webhook: address, status, unmatched visitors (secret: admins)
 """
 
 import json
 import logging
+import secrets
 import uuid
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,7 +32,7 @@ from app.core.config import get_settings
 from app.core.db import SessionLocal, get_db
 from app.core.security import load_session
 from app.models import Contact, TrackedLink, User
-from app.services import engagement, tracking
+from app.services import engagement, site_tracking, tracking
 
 logger = logging.getLogger("app.tracking")
 
@@ -138,6 +142,41 @@ async def demo_event(request: Request):
     return Response(status_code=204, headers=headers)
 
 
+# --- website batches (trace-studio.tech, server to server) ----------------------------------------
+
+def _ingest_site(batch: site_tracking.BatchIn) -> dict:
+    with SessionLocal() as db:
+        try:
+            result = site_tracking.ingest(db, batch)
+            db.commit()
+            return result
+        except Exception:
+            db.rollback()
+            raise
+
+
+@demo_router.post("/site-events")
+async def site_events(request: Request):
+    """One batch of up to 60 events. Answers well within the website's 5-second limit: a few lookups and one insert.
+    A retried batch is accepted again and stores nothing new (``duplicates`` in the answer)."""
+    secret = get_settings().tracking_webhook_secret
+    if not secret:
+        return JSONResponse({"detail": "Website tracking is not configured (TRACKING_WEBHOOK_SECRET)"}, status_code=503)
+    given = request.headers.get("authorization", "").encode()
+    if not secrets.compare_digest(given, f"Bearer {secret}".encode()):
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"})
+    try:
+        batch = site_tracking.parse(await request.body())
+    except site_tracking.Rejected as exc:
+        return JSONResponse({"detail": f"Invalid batch: {exc}"}, status_code=422)
+    try:
+        result = await run_in_threadpool(_ingest_site, batch)
+    except Exception:
+        logger.exception("website batch not stored")
+        return JSONResponse({"detail": "Not stored"}, status_code=500)
+    return {"ok": True, **result}
+
+
 # --- signed-in views ------------------------------------------------------------------------------
 
 @router.get("/emails")
@@ -174,6 +213,11 @@ def contact_timeline(contact_id: uuid.UUID, raw: bool = False, user: User = Depe
         raise HTTPException(404, "Prospect not found")
     # raw events carry user agents: troubleshooting detail for people who run outreach
     return engagement.timeline(db, contact_id, raw=raw and permissions.has(user, "outreach.access"))
+
+
+@router.get("/site")
+def site_status(user: User = Depends(require_perm("outreach.access")), db: Session = Depends(get_db)):
+    return site_tracking.status(db, include_secret=user.role == "admin")
 
 
 def _public_settings(db: Session) -> dict:

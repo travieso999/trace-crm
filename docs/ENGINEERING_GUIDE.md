@@ -466,7 +466,7 @@ All backend config is environment variables (or `apps/api/.env`, which is git-ig
 | `TRUST_PROXY_HEADERS` | Only `true` behind your own reverse proxy (otherwise `X-Forwarded-For` is ignored) |
 | `SESSION_TTL_HOURS`, `LOGIN_RATE_LIMIT_PER_MINUTE`, `API_RATE_LIMIT_PER_MINUTE` | Session and rate-limit tuning |
 | `REDIS_URL` | Optional: shared rate limiter and Celery broker |
-| `NOTIFY_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/STARTTLS` | Optional SMTP for reminder emails |
+| `NOTIFY_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/STARTTLS` | Optional SMTP for reminder emails and two-step sign-in codes by email (the email option is offered only when set) |
 | `SANDBOX_OUTBOX_DIR` | Where sandbox "sent" mail goes (`./var/sandbox_outbox`) |
 | `CSV_MAX_BYTES`, `CSV_MAX_ROWS` | Import limits (10 MB / 25,000 rows) |
 | `DEV_DB_PGDATA` | Written by `dev_db.py`; records which data directory `DATABASE_URL` belongs to |

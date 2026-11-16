@@ -20,7 +20,7 @@ const schema = z.object({
 });
 type Values = z.infer<typeof schema>;
 
-type LoginResult = { mfa_required?: boolean; mfa_token?: string };
+type LoginResult = { mfa_required?: boolean; mfa_token?: string; method?: "totp" | "email"; sent_to?: string | null; email_sent?: boolean | null };
 
 function LoginForm() {
   const router = useRouter();
@@ -28,6 +28,9 @@ function LoginForm() {
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [challenge, setChallenge] = useState<LoginResult | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
   const [code, setCode] = useState("");
   const [verifying, setVerifying] = useState(false);
   const { register, handleSubmit, formState } = useForm<Values>({ resolver: zodResolver(schema) });
@@ -42,8 +45,13 @@ function LoginForm() {
     setError(null);
     try {
       const r = await api<LoginResult>("/api/auth/login", { body: values });
-      if (r.mfa_required && r.mfa_token) setMfaToken(r.mfa_token);
-      else signedIn();
+      if (r.mfa_required && r.mfa_token) {
+        setMfaToken(r.mfa_token);
+        setChallenge(r);
+        setNotice(null);
+        if (r.method === "email" && r.email_sent === false)
+          setError("We couldn't send the code email. Try “Send a new code” in a minute, or use a recovery code.");
+      } else signedIn();
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -64,10 +72,36 @@ function LoginForm() {
     }
   }
 
-  if (mfaToken)
+  async function resend() {
+    setError(null);
+    setResending(true);
+    try {
+      const r = await api<LoginResult>("/api/auth/login/mfa/resend", { body: { mfa_token: mfaToken } });
+      setNotice(`New code sent to ${r.sent_to}. Only the newest code works.`);
+      setCode("");
+    } catch (err) {
+      setError(errorMessage(err));
+      if (err instanceof ApiError && err.message.startsWith("Sign-in expired")) setMfaToken(null);
+    } finally {
+      setResending(false);
+    }
+  }
+
+  if (mfaToken) {
+    const byEmail = challenge?.method === "email";
     return (
       <form onSubmit={onCode} className="grid gap-4" noValidate>
-        <Field label="Code from your authenticator app" htmlFor="code" hint="Lost your phone? Enter one of your recovery codes instead.">
+        {byEmail && challenge?.email_sent !== false && !notice && (
+          <p className="text-sm text-muted-foreground">
+            We emailed a 6-digit code to <span className="font-medium text-foreground">{challenge?.sent_to}</span>. It expires in 10 minutes.
+          </p>
+        )}
+        {notice && <p className="text-sm text-muted-foreground">{notice}</p>}
+        <Field
+          label={byEmail ? "Code from the email" : "Code from your authenticator app"}
+          htmlFor="code"
+          hint={byEmail ? "No email? Check spam, send a new code, or enter one of your recovery codes." : "Lost your phone? Enter one of your recovery codes instead."}
+        >
           <Input id="code" autoComplete="one-time-code" autoFocus value={code} onChange={(e) => setCode(e.target.value.trim())} />
         </Field>
         {error && (
@@ -79,11 +113,18 @@ function LoginForm() {
           {verifying && <Loader2 className="animate-spin" />}
           Verify
         </Button>
-        <Button type="button" variant="ghost" onClick={() => { setMfaToken(null); setCode(""); setError(null); }}>
+        {byEmail && (
+          <Button type="button" variant="outline" disabled={resending} onClick={resend}>
+            {resending && <Loader2 className="animate-spin" />}
+            Send a new code
+          </Button>
+        )}
+        <Button type="button" variant="ghost" onClick={() => { setMfaToken(null); setChallenge(null); setNotice(null); setCode(""); setError(null); }}>
           Back
         </Button>
       </form>
     );
+  }
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="grid gap-4" noValidate>

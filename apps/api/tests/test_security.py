@@ -20,13 +20,15 @@ from tests.conftest import login, make_user
 
 PASSWORD = "Sup3rSecretPass!"
 # routes that work without a session, on purpose
-PUBLIC = {("POST", "/api/auth/login"), ("POST", "/api/auth/login/mfa"), ("GET", "/api/health"),
+PUBLIC = {("POST", "/api/auth/login"), ("POST", "/api/auth/login/mfa"), ("POST", "/api/auth/login/mfa/resend"),
+          ("GET", "/api/health"),
           ("GET", "/api/email-accounts/oauth/google/callback"), ("GET", "/u/{token}"), ("POST", "/u/{token}"),
           # the scheduler's endpoint: needs "Authorization: Bearer <CRON_SECRET>" and answers 404 when no secret is set
           ("GET", "/api/cron/engine"), ("GET", "/u/thumb/{token}")}
 # writes any signed-in user may make about themselves
 SELF_SERVICE = {"/api/auth/logout", "/api/auth/password", "/api/auth/sessions/revoke-others", "/api/auth/mfa/setup",
-                "/api/auth/mfa/enable", "/api/auth/mfa/disable", "/api/auth/mfa/recovery-codes"}
+                "/api/auth/mfa/enable", "/api/auth/mfa/disable", "/api/auth/mfa/recovery-codes",
+                "/api/auth/mfa/email/setup", "/api/auth/mfa/email/enable", "/api/auth/mfa/email/send-code"}
 # POSTs that only compute something from the request body and change nothing
 READ_ONLY_POSTS = {"/api/campaigns/preview"}
 
@@ -303,6 +305,97 @@ def test_mfa_disable_needs_password_and_code_and_alerts(client, db):
     assert client.post("/api/auth/mfa/disable", json={"password": "nope", "code": _code(secret, 1)}).status_code == 400
     assert client.post("/api/auth/mfa/disable", json={"password": PASSWORD, "code": _code(secret, 1)}).status_code == 200
     assert db.scalar(select(Notification).where(Notification.title.startswith("Two-step verification turned off")))
+
+
+@pytest.fixture
+def mail_codes(monkeypatch):
+    """Email two-step codes without SMTP: captures what would be mailed. Each item is (to, subject, text)."""
+    from app.core.config import get_settings
+    from app.services import notify_email
+
+    sent: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(get_settings(), "notify_smtp_host", "smtp.example.test")
+    monkeypatch.setattr(get_settings(), "notify_smtp_from", "crm@example.test")
+    monkeypatch.setattr(get_settings(), "mfa_trusted_ip_days", 0)
+    monkeypatch.setattr(notify_email, "send", lambda to, subject, text: sent.append((to, subject, text)))
+    return sent
+
+
+def _mailed_code(sent) -> str:
+    return sent[-1][1].split()[0]  # "123456 is your Trace CRM sign-in code"
+
+
+def test_email_codes_offered_only_when_mail_is_configured(client):
+    assert client.get("/api/auth/mfa/options").json()["email_available"] is False
+    assert client.post("/api/auth/mfa/email/setup", json={"password": PASSWORD}).status_code == 409
+
+
+def test_mfa_by_email_sign_in_flow(app, client, db, mail_codes):
+    assert client.get("/api/auth/mfa/options").json()["email_available"] is True
+    assert client.post("/api/auth/mfa/email/setup", json={"password": "wrong"}).status_code == 400
+    assert client.post("/api/auth/mfa/email/setup", json={"password": PASSWORD}).status_code == 200
+    assert mail_codes[-1][0] == "admin@trace.studio"
+    code = _mailed_code(mail_codes)
+    stored = db.scalar(select(User).where(User.email == "admin@trace.studio"))
+    assert code not in (stored.email_code_hash or "")  # only a keyed hash is kept
+    assert client.post("/api/auth/mfa/email/enable", json={"code": "000000"}).status_code == 400
+    r = client.post("/api/auth/mfa/email/enable", json={"code": code})
+    assert r.status_code == 200 and r.json()["user"]["mfa_method"] == "email"
+    recovery = r.json()["recovery_codes"]
+
+    anon = TestClient(app)
+    r = anon.post("/api/auth/login", json={"email": "admin@trace.studio", "password": PASSWORD})
+    body = r.json()
+    assert body["mfa_required"] and body["method"] == "email" and body["email_sent"] and body["sent_to"] == "ad•••@trace.studio"
+    assert "ts_session" not in r.cookies and anon.get("/api/auth/me").status_code == 401
+    first = _mailed_code(mail_codes)
+    # a resend replaces the code: the old one stops working
+    assert anon.post("/api/auth/login/mfa/resend", json={"mfa_token": body["mfa_token"]}).status_code == 200
+    newest = _mailed_code(mail_codes)
+    if newest != first:
+        assert anon.post("/api/auth/login/mfa", json={"mfa_token": body["mfa_token"], "code": first}).status_code == 401
+    ok = anon.post("/api/auth/login/mfa", json={"mfa_token": body["mfa_token"], "code": newest})
+    assert ok.status_code == 200 and ok.json()["user"]["mfa_enabled"]
+    assert db.scalar(select(AuditLog).where(AuditLog.action == "auth.login").order_by(AuditLog.created_at.desc())
+                     ).data["method"] == "email"
+    # a code works once
+    ratelimit.reset()
+    again = TestClient(app)
+    t2 = again.post("/api/auth/login", json={"email": "admin@trace.studio", "password": PASSWORD}).json()["mfa_token"]
+    if newest != _mailed_code(mail_codes):  # this sign-in mailed a fresh code; the used one must not work again
+        assert again.post("/api/auth/login/mfa", json={"mfa_token": t2, "code": newest}).status_code == 401
+    # an expired code is refused
+    expiring = _mailed_code(mail_codes)
+    db.execute(update(User).where(User.email == "admin@trace.studio").values(email_code_expires_at=utcnow() - timedelta(seconds=1)))
+    db.commit()
+    assert again.post("/api/auth/login/mfa", json={"mfa_token": t2, "code": expiring}).status_code == 401
+    # a recovery code still works when the email doesn't arrive
+    assert again.post("/api/auth/login/mfa", json={"mfa_token": t2, "code": recovery[0]}).status_code == 200
+
+
+def test_email_failure_at_sign_in_still_allows_a_recovery_code(app, client, db, mail_codes, monkeypatch):
+    from app.services import notify_email
+
+    client.post("/api/auth/mfa/email/setup", json={"password": PASSWORD})
+    recovery = client.post("/api/auth/mfa/email/enable", json={"code": _mailed_code(mail_codes)}).json()["recovery_codes"]
+
+    def down(*_a):
+        raise notify_email.NotifyEmailError("SMTP down")
+    monkeypatch.setattr(notify_email, "send", down)
+    anon = TestClient(app)
+    body = anon.post("/api/auth/login", json={"email": "admin@trace.studio", "password": PASSWORD}).json()
+    assert body["mfa_required"] and body["email_sent"] is False
+    assert anon.post("/api/auth/login/mfa", json={"mfa_token": body["mfa_token"], "code": recovery[0]}).status_code == 200
+
+
+def test_mfa_by_email_disable_needs_a_fresh_code(client, db, mail_codes):
+    client.post("/api/auth/mfa/email/setup", json={"password": PASSWORD})
+    client.post("/api/auth/mfa/email/enable", json={"code": _mailed_code(mail_codes)})
+    assert client.post("/api/auth/mfa/disable", json={"password": PASSWORD, "code": "000000"}).status_code == 400
+    assert client.post("/api/auth/mfa/email/send-code").status_code == 200
+    assert client.post("/api/auth/mfa/disable", json={"password": PASSWORD, "code": _mailed_code(mail_codes)}).status_code == 200
+    me = client.get("/api/auth/me").json()["user"]
+    assert me["mfa_enabled"] is False and me["mfa_method"] == "totp"
 
 
 def test_admin_features_need_mfa_when_required(app, client, monkeypatch):

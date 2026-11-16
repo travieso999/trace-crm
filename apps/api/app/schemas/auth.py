@@ -29,6 +29,7 @@ class UserOut(ORMModel):
     created_at: datetime | None = None
     password_changed_at: datetime | None = None
     mfa_enabled: bool = False
+    mfa_method: str = "totp"
 
     @computed_field
     @property
@@ -46,6 +47,13 @@ class MeOut(BaseModel):
 class MfaChallengeOut(BaseModel):
     mfa_required: bool = True
     mfa_token: str
+    method: str = "totp"  # totp | email
+    sent_to: str | None = None  # masked address the code went to (email method)
+    email_sent: bool | None = None  # False when the code email could not be sent (a recovery code still works)
+
+
+class MfaResendIn(BaseModel):
+    mfa_token: str = Field(min_length=1, max_length=400)
 
 
 class MfaLoginIn(BaseModel):

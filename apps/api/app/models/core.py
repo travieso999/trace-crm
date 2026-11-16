@@ -39,6 +39,10 @@ class User(UUIDPk, Timestamps, Base):
     totp_enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     totp_last_step: Mapped[int | None] = mapped_column(BigInteger)  # a code is accepted once, never replayed
     recovery_code_hashes: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    # 'totp' (authenticator app) or 'email' (a one-time code mailed to the account address at each sign-in)
+    mfa_method: Mapped[str] = mapped_column(String(10), default="totp", server_default="totp")
+    email_code_hash: Mapped[str | None] = mapped_column(String(64))  # keyed hash of the pending code, never the code
+    email_code_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     @property
     def mfa_enabled(self) -> bool:

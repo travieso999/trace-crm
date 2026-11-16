@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Copy, ShieldCheck, ShieldOff } from "lucide-react";
+import { Copy, Mail, ShieldCheck, ShieldOff, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +28,7 @@ const ACTIONS: Record<string, string> = {
   "auth.logout": "Signed out",
   "auth.login_failed": "Failed sign-in",
   "auth.mfa_failed": "Wrong two-step code",
+  "auth.mfa_email_failed": "Two-step code email failed",
   "auth.locked_out": "Sign-in locked",
   "auth.password_changed": "Password changed",
   "auth.sessions_revoked": "Signed out other sessions",
@@ -77,19 +78,29 @@ function RecoveryCodes({ codes }: { codes: string[] }) {
   );
 }
 
+type MfaOptions = { email_available: boolean; email: string };
+
 function EnableDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
+  const options = useQuery({ queryKey: ["mfa-options"], queryFn: () => api<MfaOptions>("/api/auth/mfa/options"), enabled: open });
+  const [method, setMethod] = React.useState<"email" | "totp" | null>(null);
   const [password, setPassword] = React.useState("");
   const [code, setCode] = React.useState("");
   const [setup, setSetup] = React.useState<Setup | null>(null);
+  const [sentTo, setSentTo] = React.useState<string | null>(null);
   const [codes, setCodes] = React.useState<string[] | null>(null);
   const start = useMutation({
     mutationFn: () => api<Setup>("/api/auth/mfa/setup", { body: { password } }),
     onSuccess: (d) => { setSetup(d); setPassword(""); },
     onError: (e) => toast.error(errorMessage(e)),
   });
+  const startEmail = useMutation({
+    mutationFn: (pw: string) => api<{ sent_to: string }>("/api/auth/mfa/email/setup", { body: { password: pw } }),
+    onSuccess: (d) => { setSentTo(d.sent_to); setCode(""); },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
   const confirm = useMutation({
-    mutationFn: () => api<{ recovery_codes: string[] }>("/api/auth/mfa/enable", { body: { code } }),
+    mutationFn: () => api<{ recovery_codes: string[] }>(method === "email" ? "/api/auth/mfa/email/enable" : "/api/auth/mfa/enable", { body: { code } }),
     onSuccess: (d) => {
       setCodes(d.recovery_codes);
       qc.invalidateQueries({ queryKey: ["me"] });
@@ -99,16 +110,28 @@ function EnableDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
   });
   const close = (o: boolean) => {
     onOpenChange(o);
-    if (!o) { setSetup(null); setCodes(null); setCode(""); setPassword(""); }
+    if (!o) { setSetup(null); setSentTo(null); setMethod(null); setCodes(null); setCode(""); setPassword(""); }
   };
+  const emailOk = options.data?.email_available ?? false;
+  const codeForm = (label: string, extra?: React.ReactNode) => (
+    <form className="grid gap-3" onSubmit={(e) => { e.preventDefault(); confirm.mutate(); }}>
+      {extra}
+      <Field label={label} htmlFor="mfa-code">
+        <Input id="mfa-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus value={code}
+               onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
+      </Field>
+      <Button type="submit" disabled={code.length !== 6 || confirm.isPending}>
+        {confirm.isPending && <Spinner />} Turn on
+      </Button>
+    </form>
+  );
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Turn on two-step verification</DialogTitle>
           <DialogDescription>
-            After your password, sign-in will also ask for a 6-digit code from an authenticator app (Google
-            Authenticator, Microsoft Authenticator, 1Password…).
+            After your password, sign-in will also ask for a 6-digit code: one we email you, or one from an authenticator app.
           </DialogDescription>
         </DialogHeader>
         {codes ? (
@@ -116,6 +139,55 @@ function EnableDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
             <RecoveryCodes codes={codes} />
             <Button type="button" onClick={() => close(false)}>I’ve saved them</Button>
           </>
+        ) : method === null ? (
+          <div className="grid gap-2">
+            {options.isPending ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  disabled={!emailOk}
+                  onClick={() => setMethod("email")}
+                  className="grid gap-0.5 rounded-lg border p-3 text-left hover:bg-muted/50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className="flex items-center gap-2 font-medium"><Mail className="size-4" /> Email me a code {emailOk && <span className="text-xs font-normal text-muted-foreground">(easiest)</span>}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {emailOk
+                      ? <>Each sign-in from a new place sends a code to <span className="font-medium text-foreground">{options.data?.email}</span>.</>
+                      : "Not available yet: the server’s email settings (NOTIFY_SMTP_*) need to be filled in first."}
+                  </span>
+                </button>
+                <button type="button" onClick={() => setMethod("totp")} className="grid gap-0.5 rounded-lg border p-3 text-left hover:bg-muted/50">
+                  <span className="flex items-center gap-2 font-medium"><Smartphone className="size-4" /> Authenticator app</span>
+                  <span className="text-sm text-muted-foreground">Google Authenticator, Microsoft Authenticator, 1Password… Works without email.</span>
+                </button>
+              </>
+            )}
+          </div>
+        ) : method === "email" ? (
+          sentTo ? (
+            codeForm("Code from the email", (
+              <p className="text-sm">
+                We sent a 6-digit code to <span className="font-medium">{sentTo}</span>. It expires in 10 minutes.{" "}
+                <button type="button" className="text-signal hover:underline" disabled={startEmail.isPending}
+                        onClick={() => startEmail.mutate(password)}>
+                  Send a new code
+                </button>
+              </p>
+            ))
+          ) : (
+            <form className="grid gap-3" onSubmit={(e) => { e.preventDefault(); startEmail.mutate(password); }}>
+              <Field label="Confirm your password" htmlFor="mfa-pw">
+                <Input id="mfa-pw" type="password" autoComplete="current-password" autoFocus value={password}
+                       onChange={(e) => setPassword(e.target.value)} />
+              </Field>
+              <Button type="submit" disabled={!password || startEmail.isPending}>
+                {startEmail.isPending && <Spinner />} Email me a code
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setMethod(null)}>Back</Button>
+            </form>
+          )
         ) : !setup ? (
           <form className="grid gap-3" onSubmit={(e) => { e.preventDefault(); start.mutate(); }}>
             <Field label="Confirm your password" htmlFor="mfa-pw">
@@ -150,8 +222,13 @@ function EnableDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o:
 }
 
 /** Password + current code, for turning it off or replacing recovery codes. */
-function ConfirmDialog({ mode, onOpenChange }: { mode: "disable" | "codes" | null; onOpenChange: (o: boolean) => void }) {
+function ConfirmDialog({ mode, byEmail, onOpenChange }: { mode: "disable" | "codes" | null; byEmail: boolean; onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
+  const sendCode = useMutation({
+    mutationFn: () => api<{ message: string }>("/api/auth/mfa/email/send-code", { method: "POST" }),
+    onSuccess: (d) => toast.success(d.message),
+    onError: (e) => toast.error(errorMessage(e)),
+  });
   const [password, setPassword] = React.useState("");
   const [code, setCode] = React.useState("");
   const [codes, setCodes] = React.useState<string[] | null>(null);
@@ -191,8 +268,18 @@ function ConfirmDialog({ mode, onOpenChange }: { mode: "disable" | "codes" | nul
               <Input id="mfa-c-pw" type="password" autoComplete="current-password" autoFocus value={password}
                      onChange={(e) => setPassword(e.target.value)} />
             </Field>
-            <Field label={mode === "disable" ? "Code from your app (or a recovery code)" : "Code from your app"} htmlFor="mfa-c-code">
-              <Input id="mfa-c-code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.trim())} />
+            <Field
+              label={`Code from ${byEmail ? "the email" : "your app"}${mode === "disable" ? " (or a recovery code)" : ""}`}
+              htmlFor="mfa-c-code"
+            >
+              <div className="flex gap-2">
+                <Input id="mfa-c-code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.trim())} />
+                {byEmail && (
+                  <Button type="button" variant="outline" className="shrink-0" disabled={sendCode.isPending} onClick={() => sendCode.mutate()}>
+                    <Mail /> Email me a code
+                  </Button>
+                )}
+              </div>
             </Field>
             <Button type="submit" variant={mode === "disable" ? "destructive" : "default"}
                     disabled={!password || code.length < 6 || run.isPending}>
@@ -244,6 +331,7 @@ export function SecuritySettings() {
     onError: (e) => toast.error(errorMessage(e)),
   });
   const on = me.data?.user.mfa_enabled ?? false;
+  const byEmail = me.data?.user.mfa_method === "email";
   return (
     <Card id="security" className="scroll-mt-20 lg:col-span-2">
       <CardHeader>
@@ -258,7 +346,7 @@ export function SecuritySettings() {
             Two-step verification is {on ? "on" : "off"}
           </p>
           <p className="text-sm text-muted-foreground">
-            {on ? "Signing in needs your password and a code from your authenticator app."
+            {on ? `Signing in from a new place needs your password and a code ${byEmail ? "emailed to you" : "from your authenticator app"}.`
               : "With it on, a stolen or guessed password isn’t enough to get into your account."}
             {isAdmin && !on && " Required for admins on the live site."}
           </p>
@@ -284,7 +372,7 @@ export function SecuritySettings() {
         )}
       </CardContent>
       <EnableDialog open={enabling} onOpenChange={setEnabling} />
-      <ConfirmDialog mode={confirming} onOpenChange={(o) => !o && setConfirming(null)} />
+      <ConfirmDialog mode={confirming} byEmail={byEmail} onOpenChange={(o) => !o && setConfirming(null)} />
     </Card>
   );
 }

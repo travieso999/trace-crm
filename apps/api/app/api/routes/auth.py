@@ -28,6 +28,7 @@ from app.schemas.auth import (
     MfaDisableIn,
     MfaEnableIn,
     MfaLoginIn,
+    MfaResendIn,
     MfaSetupIn,
     PasswordChange,
     PasswordReset,
@@ -37,7 +38,7 @@ from app.schemas.auth import (
     UserUpdate,
 )
 from app.schemas.common import Message
-from app.services import security_alerts
+from app.services import notify_email, security_alerts
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -104,7 +105,7 @@ def _trusted_ip(db: Session, user: User, ip: str) -> bool:
     since = max(utcnow() - timedelta(days=days), user.totp_enabled_at)
     return db.scalar(select(AuditLog.id).where(
         AuditLog.user_id == user.id, AuditLog.action == "auth.login", AuditLog.ip_address == ip,
-        AuditLog.created_at > since, AuditLog.data["method"].astext.in_(("totp", "recovery"))).limit(1)) is not None
+        AuditLog.created_at > since, AuditLog.data["method"].astext.in_(("totp", "email", "recovery"))).limit(1)) is not None
 
 
 def _start_session(db: Session, request: Request, response: Response, user: User, method: str) -> MeOut:
@@ -136,26 +137,60 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(body.password)
     if user.mfa_enabled and not _trusted_ip(db, user, ip):
+        out = MfaChallengeOut(mfa_token=mfa.issue_challenge(user), method=user.mfa_method)
+        if user.mfa_method == "email":
+            out.sent_to, out.email_sent = mfa.mask_email(user.email), _send_login_code(db, request, user)
         db.commit()  # the challenge is bound to the (possibly rehashed) password
-        return MfaChallengeOut(mfa_token=mfa.issue_challenge(user))
+        return out
     return _start_session(db, request, response, user, "trusted_ip" if user.mfa_enabled else "password")
 
 
-@router.post("/login/mfa", response_model=MeOut)
-def login_mfa(body: MfaLoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
-    """Second step of sign-in: the code from the authenticator app, or a recovery code."""
+def _send_login_code(db: Session, request: Request, user: User) -> bool:
+    """Emails a sign-in code; at most 5 per 10 minutes per account so the inbox can't be flooded."""
+    if not ratelimit.hit(f"mfa-email:{user.id}", 5, 600):
+        return False
+    try:
+        mfa.send_email_code(user)
+    except notify_email.NotifyEmailError as exc:
+        audit(db, None, "auth.mfa_email_failed", "user", user.id, request, email=user.email, error=str(exc)[:300])
+        return False
+    return True
+
+
+def _challenge_user(db: Session, token: str) -> User:
     expired = HTTPException(status.HTTP_401_UNAUTHORIZED, "Sign-in expired. Enter your password again.")
-    uid = mfa.challenge_user_id(body.mfa_token)
+    uid = mfa.challenge_user_id(token)
     if uid is None:
         raise expired
     try:
         user_id = uuid.UUID(uid)
     except ValueError:
         raise expired from None
-    # row lock: two requests with the same code can't both burn the same time step
+    # row lock: two requests with the same code can't both use it
     user = db.scalar(select(User).where(User.id == user_id).with_for_update())
-    if user is None or not user.is_active or not user.mfa_enabled or not mfa.challenge_matches(body.mfa_token, user):
+    if user is None or not user.is_active or not user.mfa_enabled or not mfa.challenge_matches(token, user):
         raise expired
+    return user
+
+
+@router.post("/login/mfa/resend", response_model=MfaChallengeOut)
+def login_mfa_resend(body: MfaResendIn, request: Request, db: Session = Depends(get_db)):
+    """A fresh emailed code for a sign-in in progress (the earlier code stops working)."""
+    user = _challenge_user(db, body.mfa_token)
+    if user.mfa_method != "email":
+        raise HTTPException(409, "This account uses an authenticator app")
+    sent = _send_login_code(db, request, user)
+    db.commit()
+    if not sent:
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS,
+                            "Couldn't send another code right now. Wait a few minutes, or use a recovery code.")
+    return MfaChallengeOut(mfa_token=body.mfa_token, method="email", sent_to=mfa.mask_email(user.email), email_sent=True)
+
+
+@router.post("/login/mfa", response_model=MeOut)
+def login_mfa(body: MfaLoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
+    """Second step of sign-in: the code from the authenticator app or the email, or a recovery code."""
+    user = _challenge_user(db, body.mfa_token)
     ip = client_ip(request) or "unknown"
     if not ratelimit.hit(f"mfa:user:{user.id}", 5):
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many attempts. Try again in a minute.")
@@ -164,7 +199,8 @@ def login_mfa(body: MfaLoginIn, request: Request, response: Response, db: Sessio
     if method is None:
         audit(db, None, "auth.mfa_failed", "user", user.id, request, email=user.email)
         db.commit()
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "That code didn't work. Check your authenticator app.")
+        where = "the newest email" if user.mfa_method == "email" else "your authenticator app"
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"That code didn't work. Check {where}.")
     if method == "recovery":
         left = len(user.recovery_code_hashes)
         audit(db, user, "auth.recovery_code_used", "user", user.id, request, remaining=left)
@@ -287,6 +323,65 @@ def mfa_enable(body: MfaEnableIn, request: Request, sess: UserSession = Depends(
     return {"recovery_codes": codes, "user": UserOut.model_validate(user)}
 
 
+@router.get("/mfa/options")
+def mfa_options(sess: UserSession = Depends(current_session)):
+    """Which two-step methods this server can offer (email needs the NOTIFY_SMTP_* settings)."""
+    return {"email_available": mfa.email_codes_available(), "email": sess.user.email}
+
+
+def _email_code_or_error(user: User) -> None:
+    if not ratelimit.hit(f"mfa-email:{user.id}", 5, 600):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many codes sent. Wait a few minutes.")
+    try:
+        mfa.send_email_code(user)
+    except notify_email.NotifyEmailError as exc:
+        raise HTTPException(502, f"Couldn't send the code email: {exc}") from exc
+
+
+@router.post("/mfa/email/setup")
+def mfa_email_setup(body: MfaSetupIn, request: Request, sess: UserSession = Depends(current_session),
+                    db: Session = Depends(get_db)):
+    """Starts enrolment with emailed codes: sends a code to confirm the address receives them."""
+    user = db.scalar(select(User).where(User.id == sess.user_id).with_for_update())
+    if user.mfa_enabled:
+        raise HTTPException(409, "Two-step verification is already on")
+    if not mfa.email_codes_available():
+        raise HTTPException(409, "Email codes aren't set up on this server yet (NOTIFY_SMTP_* settings)")
+    _confirm_password(user, body.password)
+    _email_code_or_error(user)
+    audit(db, user, "auth.mfa_setup_started", "user", user.id, request, method="email")
+    db.commit()
+    return {"sent_to": user.email}
+
+
+@router.post("/mfa/email/enable")
+def mfa_email_enable(body: MfaEnableIn, request: Request, sess: UserSession = Depends(current_session),
+                     db: Session = Depends(get_db)):
+    user = db.scalar(select(User).where(User.id == sess.user_id).with_for_update())
+    if user.mfa_enabled:
+        raise HTTPException(409, "Two-step verification is already on")
+    if not ratelimit.hit(f"mfa:user:{user.id}", 5):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many attempts. Try again in a minute.")
+    if not mfa.verify_email_code(user, body.code):
+        raise HTTPException(400, "That code didn't work. Use the newest email, or send a new code.")
+    codes = mfa.enable_email(user)
+    revoked = _revoke_others(db, user.id, sess.id)
+    audit(db, user, "auth.mfa_enabled", "user", user.id, request, method="email", other_sessions_revoked=revoked)
+    db.commit()
+    return {"recovery_codes": codes, "user": UserOut.model_validate(user)}
+
+
+@router.post("/mfa/email/send-code", response_model=Message)
+def mfa_email_send_code(sess: UserSession = Depends(current_session), db: Session = Depends(get_db)):
+    """A code for confirming a change (turning two-step off, new recovery codes) when the method is email."""
+    user = db.scalar(select(User).where(User.id == sess.user_id).with_for_update())
+    if not user.mfa_enabled or user.mfa_method != "email":
+        raise HTTPException(409, "Two-step verification by email is not on")
+    _email_code_or_error(user)
+    db.commit()
+    return Message(message=f"Code sent to {mfa.mask_email(user.email)}")
+
+
 @router.post("/mfa/disable", response_model=Message)
 def mfa_disable(body: MfaDisableIn, request: Request, sess: UserSession = Depends(current_session),
                 db: Session = Depends(get_db)):
@@ -314,7 +409,7 @@ def mfa_new_recovery_codes(body: MfaDisableIn, request: Request, sess: UserSessi
     if not user.mfa_enabled:
         raise HTTPException(409, "Two-step verification is not on")
     _confirm_password(user, body.password)
-    if not mfa.verify_totp(user, body.code):
+    if not mfa.verify_current_factor(user, body.code):
         db.commit()
         raise HTTPException(400, "That code didn't work")
     codes = mfa.new_recovery_codes(user)

@@ -15,6 +15,7 @@ export type User = {
   created_at: string | null;
   password_changed_at: string | null;
   mfa_enabled: boolean;
+  mfa_method?: "totp" | "email";
 };
 
 /** A teammate as every signed-in user sees them (for owner pickers and filters). */

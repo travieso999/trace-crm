@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog, ErrorState, StatusBadge } from "@/components/common";
 import { LeadForm, toPayload, type LeadValues } from "@/components/lead-form";
 import { useCanWrite } from "@/components/app-shell";
+import { EngagementTimelineView } from "@/components/engagement";
 import { api, errorMessage } from "@/lib/api";
 import { dateTime, fullName, humanize, relTime } from "@/lib/format";
 import type { Activity, Contact } from "@/lib/types";
@@ -189,6 +190,14 @@ export default function LeadDetailPage() {
               </CardContent>
             </Card>
           )}
+          <Card>
+            <CardHeader>
+              <CardTitle>Email &amp; demo engagement</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <EngagementTimelineView contactId={c.id} />
+            </CardContent>
+          </Card>
           <Timeline contactId={c.id} canWrite={canWrite} />
         </div>
       </div>

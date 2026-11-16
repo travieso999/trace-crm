@@ -65,6 +65,10 @@ erDiagram
 | `audit_logs` | Security / compliance audit trail | idx `(entity_type, entity_id)`, `created_at` |
 | `app_settings` | Key → JSONB settings | PK `key` |
 | `oauth_states` | OAuth `state` + PKCE verifier, 10-minute TTL | PK `state` |
+| `tracked_links` | One tracked link (or the open pixel) per link per campaign email per recipient; random `token` | unique `token`; unique `(scheduled_message_id, ordinal)` (a retry reuses its tokens) |
+| `tracking_events` | Raw click/open ledger incl. suspected scanners (`suspected_bot`, `bot_reasons`, `verified_human`); keyed IP hash, never the IP | idx `(contact_id, occurred_at)`, `(link_id, occurred_at)`; purged after `tracking.retention_days` |
+| `demo_sessions` | A demo visit that arrived through a tracked demo link; random `token` held by the demo page | unique `token`; 30-day expiry |
+| `demo_events` | Demo steps (page view, application started/step/signed/submitted, other forms). Never what the visitor typed | idx `(contact_id, occurred_at)`; purged with tracking events |
 
 ## Status enums
 

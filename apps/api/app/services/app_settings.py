@@ -34,6 +34,20 @@ DEFAULTS: dict[str, dict] = {
     "backup": {"schedule": "daily 03:00 UTC", "retention_days": 14, "location": "./backups"},
     # never above what the sending provider supports: see video_assets.max_attachment_bytes
     "video_attachments": {"max_attachment_mb": 17, "warn_attachment_mb": 10, "library_max_mb": 200},
+    # Engagement tracking (services/tracking.py). Open tracking adds a 1x1 image: off by default because pixels can
+    # cost deliverability and opens are unreliable (Apple Mail Privacy Protection, image proxies).
+    "tracking": {
+        "click_tracking": True,
+        "open_tracking": False,
+        # links whose address starts with one of these count as the demo ("Watch 360° Demo" and the video block)
+        "demo_urls": ["https://trace-studio.tech/demos/ellison-reyes"],
+        # sites allowed to report demo steps to /api/track/demo
+        "demo_origins": ["https://trace-studio.tech"],
+        # a click this soon after the email was accepted is almost always a security scanner
+        "scanner_window_seconds": 20,
+        # raw click/open/demo events are deleted after this many days (timeline entries stay)
+        "retention_days": 365,
+    },
 }
 
 
@@ -81,6 +95,20 @@ def validate_section(key: str, value: dict) -> dict:
     if key == "ai":
         if int(value.get("daily_token_budget", 1)) < 0 or int(value.get("max_retries", 0)) not in range(0, 6):
             raise SettingsError("Invalid AI limits")
+    if key == "tracking":
+        for flag in ("click_tracking", "open_tracking"):
+            if flag in value and not isinstance(value[flag], bool):
+                raise SettingsError(f"{flag} must be true or false")
+        for name in ("demo_urls", "demo_origins"):
+            if name in value:
+                items = [str(u).strip() for u in value[name] or [] if str(u).strip()]
+                if len(items) > 20 or any(len(u) > 500 or not u.startswith("https://") for u in items):
+                    raise SettingsError(f"{name}: up to 20 https:// addresses")
+                value[name] = list(dict.fromkeys(items))
+        for name, low, high in (("scanner_window_seconds", 0, 600), ("retention_days", 30, 3650)):
+            if name in value and (isinstance(value[name], bool) or not isinstance(value[name], int)
+                                  or not low <= value[name] <= high):
+                raise SettingsError(f"{name} must be a whole number from {low} to {high}")
     if key == "video_attachments":
         for name, number in value.items():
             if isinstance(number, bool) or not isinstance(number, int | float) or not 0 < number <= 100_000:

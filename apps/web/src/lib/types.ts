@@ -653,7 +653,7 @@ export type ActivityItem = { id: string; type: string; summary: string; at: stri
 
 export type AppNotification = {
   id: string;
-  kind: "task_reminder" | "task_overdue" | "security" | "mailbox" | "assignment";
+  kind: "task_reminder" | "task_overdue" | "security" | "mailbox" | "assignment" | "demo_completed";
   title: string;
   body: string | null;
   contact_id: string | null;
@@ -696,6 +696,8 @@ export type SettingsResponse = {
     defaults: { daily_limit_per_mailbox: number; campaign_daily_limit: number; min_interval_seconds: number; schedule: Schedule; timezone: string };
     ai: { enabled: boolean; model: string; daily_token_budget: number; max_retries: number; classify_replies: boolean };
     notifications: { notify_on_reply: boolean; notification_email: string; notify_on_mailbox_error: boolean };
+    tracking: { click_tracking: boolean; open_tracking: boolean; demo_urls: string[]; demo_origins: string[];
+                scanner_window_seconds: number; retention_days: number };
     [key: string]: Record<string, unknown>;
   };
   integrations: {
@@ -748,3 +750,53 @@ export type LeadPreview = {
     attachment: AttachmentInfo | null;
   }[];
 };
+
+// --- engagement tracking ---------------------------------------------------------------------------
+
+export type TrackingSettings = { click_tracking: boolean; open_tracking: boolean; demo_urls: string[]; retention_days: number };
+
+export type TrackedLinkStat = {
+  id: string; kind: "link" | "demo"; label: string | null; url: string | null; clicks: number; scanner_clicks: number;
+  first_click_at: string | null; last_click_at: string | null;
+};
+
+export type EmailTrackingRow = {
+  sent_message_id: string; contact_id: string; name: string; email: string; company: string | null;
+  campaign_id: string | null; campaign: string | null; step: number | null; subject: string; sent_at: string;
+  delivery: "accepted" | "bounced"; replied_at: string | null; tracked: boolean; opens: number | null;
+  clicks: number; unique_clicks: number; scanner_clicks: number; demo_clicks: number;
+  first_click_at: string | null; last_click_at: string | null;
+  demo_visits: number; demo_interactions: number; demo_completed: number; links: TrackedLinkStat[];
+};
+
+export type EmailTrackingPage = Page<EmailTrackingRow> & {
+  summary: { emails: number; tracked: number; clicked: number; demo_clicked: number; demo_visited: number;
+             demo_completed: number; scanner_clicks: number };
+  settings: TrackingSettings;
+};
+
+export type EngagementLevel = "high" | "medium" | "low";
+
+export type EngagedProspect = {
+  contact_id: string; name: string; email: string; company: string | null; lead_status: string; level: EngagementLevel;
+  clicks: number; demo_clicks: number; opens: number; demo_visits: number; demo_interactions: number;
+  demo_completed: number; replies: number; last_engagement_at: string | null; campaigns: { id: string; name: string }[];
+  owner: { id: string; name: string } | null; open_tasks: number;
+};
+
+export type EngagedPage = Page<EngagedProspect> & { levels: Record<EngagementLevel, number>; settings: TrackingSettings };
+
+export type TimelineItem = {
+  kind: "email_sent" | "email_opened" | "email_click" | "demo_click" | "demo_visit" | "demo_application_started"
+    | "demo_application_completed" | "demo_form" | "email_replied";
+  at: string; summary: string; campaign_id: string | null; campaign: string | null;
+  url?: string | null; count?: number; sample?: boolean | null; signed?: boolean | null;
+};
+
+export type RawTrackingEvent = {
+  source: "email" | "demo"; type: string; at: string; campaign: string | null; user_agent: string | null;
+  link?: string | null; url?: string | null; suspected_bot?: boolean; verified_human?: boolean; reasons?: string[];
+  page?: string | null; form?: string | null; step?: number | null; sample?: boolean | null; signed?: boolean | null;
+};
+
+export type EngagementTimeline = { items: TimelineItem[]; level: EngagementLevel | null; raw?: RawTrackingEvent[] };

@@ -90,7 +90,25 @@ auto-reply, unsubscribe request, human reply), matches to a campaign-contact by 
 `In-Reply-To/References` → sender address, then under a row lock marks the campaign-contact replied and
 cancels pending scheduled messages. Bounces suppress the address; unsubscribe replies suppress globally.
 
-## 6. Security summary
+## 6. Engagement tracking
+
+`services/tracking.py` (write side) and `services/engagement.py` (read side); see `integrations/ellison-reyes/` for the
+demo site.
+
+1. At send reservation each eligible `href` in a campaign email becomes `{TRACKING_BASE_URL}/t/<random token>` (one
+   per link per recipient). Unsubscribe, mailto/tel and auth-style links are never rewritten; test sends, previews and
+   inbox replies are never tracked. The open pixel is opt-in (Settings → Tracking).
+2. `GET /t/<token>` records the click, flags likely scanners (scanner UA, no UA, HEAD, seconds after delivery, several
+   links at once, a signed-in CRM user) and 302s to the stored destination only (no open redirect). A demo link also
+   opens a `demo_sessions` row and appends `trc=<session token>`.
+3. The demo posts step events to `POST /api/track/demo` (allowed origins only; unknown tokens ignored; always 204).
+   An interaction proves the click was human (`verified_human`).
+4. Deduplicated timeline lines go to `crm_activities`; raw events are purged after `retention_days`.
+
+`/t/*` must reach the API: Next rewrites it in development and on Vercel; a reverse proxy in front of both must route
+`/t/*` like `/api/*` and `/u/*`.
+
+## 7. Security summary
 
 See `docs/SECURITY.md` for the full list. Highlights: no credentials in logs (log filter), OAuth tokens
 never serialised to API responses, OAuth `state` + PKCE stored server-side with 10-minute expiry, SSRF-safe

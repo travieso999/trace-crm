@@ -14,6 +14,8 @@ class Settings(BaseSettings):
 
     # Public URL the browser uses (used for OAuth redirects and unsubscribe links)
     public_url: str = "http://localhost:3000"
+    # Where tracked links and the open pixel point (…/t/<token>). Defaults to PUBLIC_URL; must route /t/* to the API.
+    tracking_base_url: str | None = None
 
     database_url: str = "postgresql+psycopg://outreach:outreach@localhost:5432/outreach"
     redis_url: str | None = None

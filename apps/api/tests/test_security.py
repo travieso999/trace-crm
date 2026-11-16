@@ -24,7 +24,10 @@ PUBLIC = {("POST", "/api/auth/login"), ("POST", "/api/auth/login/mfa"), ("POST",
           ("GET", "/api/health"),
           ("GET", "/api/email-accounts/oauth/google/callback"), ("GET", "/u/{token}"), ("POST", "/u/{token}"),
           # the scheduler's endpoint: needs "Authorization: Bearer <CRON_SECRET>" and answers 404 when no secret is set
-          ("GET", "/api/cron/engine"), ("GET", "/u/thumb/{token}")}
+          ("GET", "/api/cron/engine"), ("GET", "/u/thumb/{token}"),
+          # tracked email links, the open pixel and demo step reports: opened by prospects, never signed in
+          ("GET", "/t/{token}"), ("HEAD", "/t/{token}"), ("GET", "/t/o/{name}"),
+          ("POST", "/api/track/demo"), ("OPTIONS", "/api/track/demo")}
 # writes any signed-in user may make about themselves
 SELF_SERVICE = {"/api/auth/logout", "/api/auth/password", "/api/auth/sessions/revoke-others", "/api/auth/mfa/setup",
                 "/api/auth/mfa/enable", "/api/auth/mfa/disable", "/api/auth/mfa/recovery-codes",

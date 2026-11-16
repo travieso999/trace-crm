@@ -35,8 +35,13 @@ from app.models.mail import (
     campaign_import_batches,
     campaign_mailboxes,
 )
+from app.models.tracking import DemoEvent, DemoSession, TrackedLink, TrackingEvent
 
 __all__ = [
+    "TrackingEvent",
+    "TrackedLink",
+    "DemoSession",
+    "DemoEvent",
     "AiPersonalization",
     "AppSetting",
     "AuditLog",

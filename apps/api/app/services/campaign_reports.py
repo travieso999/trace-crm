@@ -180,17 +180,38 @@ def analytics(db: Session, campaign: Campaign) -> dict:
     def pct(n: int, d: int) -> float | None:
         return round(100 * n / d, 1) if d else None
 
+    from app.models import DemoEvent, DemoSession, TrackedLink, TrackingEvent
+    from app.services import tracking
+    from app.services.engagement import INTERACTIONS
+
+    def clicked(kind: str | None = None) -> int:
+        stmt = select(func.count(func.distinct(TrackingEvent.contact_id))).join(
+            TrackedLink, TrackedLink.id == TrackingEvent.link_id).where(
+            TrackingEvent.campaign_id == cid, tracking.human_click_filter())
+        return db.scalar(stmt.where(TrackedLink.kind == kind) if kind else stmt) or 0
+
+    def demo_contacts(*types: str) -> int:
+        stmt = select(func.count(func.distinct(DemoSession.contact_id))).join(
+            DemoEvent, DemoEvent.demo_session_id == DemoSession.id).where(DemoSession.campaign_id == cid)
+        return db.scalar(stmt.where(DemoEvent.type.in_(types)) if types else stmt) or 0
+
+    engagement = {"clicked": clicked(), "demo_clicked": clicked("demo"), "demo_visited": demo_contacts(),
+                  "demo_interacted": demo_contacts(*INTERACTIONS),
+                  "demo_completed": demo_contacts("application_submitted")}
+    opens_on = tracking.settings_for(db).get("open_tracking")
+
     return {
         "total_contacts": total, "contacts_emailed": emailed, "emails_sent": sent, "failed": sm.get("failed", 0),
         "queued": sm.get("queued", 0) + sm.get("sending", 0), "bounced": bounced,
         "delivered": max(sent - bounced, 0), "replies": replied, "positive_replies": positive,
         "unsubscribes": unsubscribed, "followups_sent": followups_sent, "awaiting_followup": awaiting,
-        "not_started": not_started, "paused": by_status.get("paused", 0),
+        "not_started": not_started, "paused": by_status.get("paused", 0), "engagement": engagement,
         "completed_sequence": by_status.get("completed", 0), "removed": by_status.get("removed", 0),
         "rates": {
             "delivery_rate": pct(sent - bounced, sent), "bounce_rate": pct(bounced, sent),
             "reply_rate": pct(replied, emailed), "positive_reply_rate": pct(positive, emailed),
             "unsubscribe_rate": pct(unsubscribed, emailed),
+            "click_rate": pct(engagement["clicked"], emailed), "demo_click_rate": pct(engagement["demo_clicked"], emailed),
         },
         "definitions": {
             "emails_sent": "Emails the mail server accepted for delivery (initial emails and follow-ups)",
@@ -200,6 +221,10 @@ def analytics(db: Session, campaign: Campaign) -> dict:
             "reply_rate": "prospects who replied ÷ prospects who were emailed at least once",
             "positive_reply_rate": "prospects with a reply classified positive ÷ prospects emailed",
             "unsubscribe_rate": "prospects who unsubscribed ÷ prospects emailed",
-            "opens": "Not tracked: this CRM does not add tracking pixels",
+            "click_rate": "prospects with a tracked click not flagged as a security scanner ÷ prospects emailed. "
+                          "Only emails sent after click tracking was turned on can count",
+            "demo_click_rate": "prospects who clicked a demo link ÷ prospects emailed",
+            "opens": ("Estimated only (image proxies and Apple Mail Privacy Protection make opens unreliable)"
+                      if opens_on else "Not tracked: open tracking is off (Settings → Tracking)"),
         },
     }

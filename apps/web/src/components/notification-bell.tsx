@@ -4,7 +4,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { AlarmClock, Bell, BellRing, CheckCheck, Circle, CircleCheck, MailWarning, ShieldAlert, UserRoundCheck, X } from "lucide-react";
+import { AlarmClock, Bell, BellRing, CheckCheck, Circle, CircleCheck, FileSignature, MailWarning, ShieldAlert, UserRoundCheck, X } from "lucide-react";
 import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -18,12 +18,13 @@ import { dueLabel } from "@/components/opportunities/shared";
 function linkFor(n: AppNotification): string | null {
   if (n.kind === "security") return "/settings#security";
   if (n.kind === "mailbox") return "/email-accounts";
+  if (n.kind === "demo_completed") return n.contact_id ? `/opportunities?open=${n.contact_id}&tab=engagement` : "/engaged";
   if (n.kind === "assignment") return n.contact_id ? `/opportunities?open=${n.contact_id}` : "/opportunities?owner=me&view=table";
   return n.contact_id ? `/opportunities?open=${n.contact_id}&tab=tasks` : null;
 }
 
 /** Kinds whose detail is a sentence in `body` (task reminders show the prospect and task type instead). */
-const hasBody = (n: AppNotification) => n.kind === "security" || n.kind === "mailbox" || n.kind === "assignment";
+const hasBody = (n: AppNotification) => n.kind === "security" || n.kind === "mailbox" || n.kind === "assignment" || n.kind === "demo_completed";
 
 type Filter = "all" | "unread" | "overdue";
 const FILTERS: [Filter, string][] = [["all", "All"], ["unread", "Unread"], ["overdue", "Overdue"]];
@@ -106,7 +107,7 @@ function Item({ n, onOpen }: { n: AppNotification; onOpen: (n: AppNotification) 
   const security = n.kind === "security";
   const alert = security || n.kind === "mailbox";
   const overdue = !hasBody(n) && n.task_status === "overdue";
-  const Icon = security ? ShieldAlert : n.kind === "mailbox" ? MailWarning : n.kind === "assignment" ? UserRoundCheck
+  const Icon = security ? ShieldAlert : n.kind === "mailbox" ? MailWarning : n.kind === "assignment" ? UserRoundCheck : n.kind === "demo_completed" ? FileSignature
     : overdue ? AlarmClock : BellRing;
   return (
     <li className={cn("group relative flex gap-3 border-b px-3 py-3 transition-colors last:border-b-0 hover:bg-muted/50", !n.read && "bg-primary/[0.04]")}>

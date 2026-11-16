@@ -3,6 +3,7 @@
     python -m app.cli create-admin --email you@tracestudio.com --name "Your Name"
     python -m app.cli generate-keys
     python -m app.cli inbox-cleanup [--apply]   # hide non-campaign conversations from the Unified Inbox
+    python -m app.cli attribution-check --at 2026-11-16T10:02:00-05:00 [--minutes 60] [--email typed@x.com]
 """
 
 import argparse
@@ -93,6 +94,21 @@ def companies_cleanup(apply: bool) -> None:
           + ("" if apply else " Run with --apply to archive them."))
 
 
+def attribution_check(at: str, minutes: int, email: str | None) -> None:
+    """Read-only: could a demo submission at this moment be tied to a campaign recipient?"""
+    from datetime import datetime
+
+    from app.core.db import SessionLocal
+    from app.services import attribution_check as check
+
+    moment = datetime.fromisoformat(at)
+    if moment.tzinfo is None:
+        sys.exit("Give --at with a time zone offset, e.g. 2026-11-16T10:02:00-05:00")
+    with SessionLocal() as db:
+        print("\n".join(check.run(db, moment, minutes, email)))
+        db.rollback()  # never writes
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="app.cli")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -108,6 +124,10 @@ def main() -> None:
     c.add_argument("--apply", action="store_true", help="Actually hide them")
     cc = sub.add_parser("companies-cleanup", help="Archive companies auto-created from imports (dry run by default)")
     cc.add_argument("--apply", action="store_true", help="Actually archive them")
+    ac = sub.add_parser("attribution-check", help="Read-only: can a demo submission be tied to a recipient?")
+    ac.add_argument("--at", required=True, help="Submission time with offset, e.g. 2026-11-16T10:02:00-05:00")
+    ac.add_argument("--minutes", type=int, default=60, help="Window either side of --at")
+    ac.add_argument("--email", help="Email typed in the submission, if any (reported as typed, never as identity)")
     args = parser.parse_args()
     if args.cmd == "create-admin":
         create_admin(args.email, args.name, args.password)
@@ -117,6 +137,8 @@ def main() -> None:
         inbox_cleanup(args.apply)
     elif args.cmd == "companies-cleanup":
         companies_cleanup(args.apply)
+    elif args.cmd == "attribution-check":
+        attribution_check(args.at, args.minutes, args.email)
     elif args.cmd == "generate-keys":
         print(f"SECRET_KEY={secrets.token_urlsafe(48)}")
         print(f"TOKEN_ENCRYPTION_KEYS={Fernet.generate_key().decode()}")

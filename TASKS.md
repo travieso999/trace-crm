@@ -113,6 +113,24 @@ Legend: [x] done & verified · [~] implemented, awaiting external verification �
 - [ ] Microsoft Graph adapter + OAuth
 - [ ] Reply/mailbox-error email notifications (settings saved, not sent yet)
 
+## Engagement tracking (2026-11-16, branch feature/engagement-tracking)
+- [x] Per-recipient tracked links (random tokens, query strings kept, several links per email), applied at send
+      reservation; unsubscribe/mailto/tel/auth links untouched; test sends, previews and replies untracked; retries and
+      reconciles reuse tokens. Migration a7e3c9d14b62 (4 additive tables)
+- [x] `/t/<token>` redirect (stored destinations only), opt-in open pixel `/t/o/<token>.gif`, scanner flags, opted-out
+      prospects redirected but not recorded, per-token rate limit, keyed IP hash only
+- [x] Demo attribution: `trc` session token on demo links, `POST /api/track/demo` (origin allow-list, no field values),
+      first-party script + integration notes in `integrations/ellison-reyes/`
+- [x] Email Tracking page, Engaged Prospects page (levels, sort/filter, inline assign, tasks/notes via the panel),
+      Engagement tab in the opportunity panel and on the prospect page, Settings → Tracking, demo-completion notice
+- [x] Retention purge in every engine pass; campaign report click/demo metrics
+- [x] `python -m app.cli attribution-check --at <time>`: read-only historical check
+- [x] Verified: full suite 383 passed + 9 updated tests re-run green (169 passed across the 6 affected files, incl. 22 in
+      tests/test_tracking.py: three recipients, same demo link, independent attribution); ruff, tsc, eslint clean;
+      HTTP walkthrough through the Next proxy (send → click → demo events → dashboards)
+- [ ] Demo site changes (not in this repo): add `trace-attribution.js` and the three one-line hooks
+- [ ] Run `attribution-check` against production for the 2026-11-16 10:02 ET submission
+
 ## Phase F — not started
 - [ ] AI personalization (generation, evidence, approval → {{custom_intro}}), AI reply classification
 - [ ] Website audits (SSRF-safe fetcher, checks, batch runs)

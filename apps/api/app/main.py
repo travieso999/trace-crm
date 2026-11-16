@@ -42,7 +42,7 @@ def create_app() -> FastAPI:
     async def request_context(request: Request, call_next):
         request_id = request.headers.get("x-request-id") or uuid.uuid4().hex[:16]
         path = request.url.path
-        if (path.startswith("/api/") and path != "/api/health") or path.startswith("/u/"):
+        if (path.startswith("/api/") and path != "/api/health") or path.startswith(("/u/", "/t/")):
             ip = client_ip(request) or "anon"
             cookie = request.cookies.get(settings.session_cookie_name, "")[:16]
             # per session, and per IP as a backstop: a made-up cookie must not buy a fresh allowance
@@ -101,15 +101,18 @@ def create_app() -> FastAPI:
         notifications,
         opportunities,
         suppressions,
+        tracking,
         unsubscribe,
         video_assets,
     )
     from app.api.routes import settings as settings_routes
 
     for module in (auth, dashboard, contacts, companies, settings_routes, email_accounts, campaigns, inbox, crm,
-                   opportunities, notifications, suppressions, analytics, unsubscribe, cron, imports, video_assets):
+                   opportunities, notifications, suppressions, analytics, unsubscribe, cron, imports, video_assets, tracking):
         app.include_router(module.router)
     app.include_router(video_assets.public_router)
+    app.include_router(tracking.public_router)
+    app.include_router(tracking.demo_router)
     app.include_router(campaigns.templates_router)
     app.include_router(opportunities.notes_router)
 

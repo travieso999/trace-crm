@@ -181,13 +181,28 @@ def usable(mailbox: EmailAccount, now: datetime) -> bool:
             and send_block_reason(mailbox, "campaign") is None)
 
 
-def pick_mailbox(db: Session, campaign: Campaign, now: datetime) -> uuid.UUID | None:
-    """Rotation: the usable campaign mailbox with the most remaining capacity today."""
+def queued_today(db: Session, mailbox: EmailAccount, now: datetime) -> int:
+    """Messages already queued on this mailbox that fall due before its day ends: capacity they have claimed."""
+    tomorrow = start_of_local_day(now, (mailbox.schedule or {}).get("timezone")) + timedelta(days=1)
+    return db.scalar(select(func.count()).select_from(ScheduledMessage).where(
+        ScheduledMessage.email_account_id == mailbox.id, ScheduledMessage.status == "queued",
+        ScheduledMessage.due_at < tomorrow)) or 0
+
+
+def pick_mailbox(db: Session, campaign: Campaign, now: datetime, *, claimed: dict[uuid.UUID, int] | None = None,
+                 exclude: uuid.UUID | None = None, need_room: bool = False) -> uuid.UUID | None:
+    """Rotation: the usable campaign mailbox with the most remaining capacity today.
+
+    Remaining capacity subtracts what is sent, in flight, already queued, and ``claimed`` (leads assigned earlier in
+    the same dispatch pass), so a batch of new leads is spread across the mailboxes instead of all landing on the
+    first one. ``need_room`` returns None rather than a mailbox that is already full."""
     best, best_room = None, None
     for m in campaign.mailboxes:
-        if not usable(m, now):
+        if m.id == exclude or not usable(m, now):
             continue
-        room = m.daily_limit - sent_today(db, m, now)
+        room = m.daily_limit - sent_today(db, m, now) - queued_today(db, m, now) - (claimed or {}).get(m.id, 0)
+        if need_room and room <= 0:
+            continue
         if best_room is None or room > best_room:
             best, best_room = m.id, room
     return best
@@ -214,6 +229,7 @@ def dispatch_due(db: Session, now: datetime | None = None) -> list[uuid.UUID]:
         .with_for_update(of=CampaignContact, skip_locked=True)
     ))
     campaigns: dict[uuid.UUID, Campaign] = {}
+    claimed: dict[uuid.UUID, int] = {}  # leads assigned per mailbox in this pass (their rows aren't flushed yet)
     for cc in due:
         campaign = campaigns.get(cc.campaign_id) or db.get(Campaign, cc.campaign_id)
         campaigns[campaign.id] = campaign
@@ -222,10 +238,11 @@ def dispatch_due(db: Session, now: datetime | None = None) -> list[uuid.UUID]:
             cc.status, cc.next_send_at, cc.stop_reason = "completed", None, "sequence_finished"
             continue
         if cc.email_account_id is None:  # a lead stays on one mailbox so follow-ups thread correctly
-            cc.email_account_id = pick_mailbox(db, campaign, now)
+            cc.email_account_id = pick_mailbox(db, campaign, now, claimed=claimed)
             if cc.email_account_id is None:
                 campaign.last_error = "No connected mailbox is available"
                 continue
+            claimed[cc.email_account_id] = claimed.get(cc.email_account_id, 0) + 1
         db.execute(
             insert(ScheduledMessage).values(
                 id=uuid.uuid4(), campaign_contact_id=cc.id, sequence_step_id=step.id, campaign_id=campaign.id,
@@ -310,9 +327,15 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
             return cancel("invalid email", "stopped")
 
         mailbox = db.scalar(select(EmailAccount).where(EmailAccount.id == sm.email_account_id).with_for_update())
-        if (mailbox is None or not usable(mailbox, now)) and cc.current_step == 0:
-            # nothing sent yet, so the lead can move to another mailbox
-            other = pick_mailbox(db, campaign, now)
+        if cc.current_step == 0:
+            # nothing sent yet, so the lead can move to another mailbox: one that works if this one doesn't, or one
+            # with room left today if this one has hit its daily limit (otherwise the lead would wait for tomorrow
+            # while the campaign's other mailboxes sit idle)
+            other = None
+            if mailbox is None or not usable(mailbox, now):
+                other = pick_mailbox(db, campaign, now)
+            elif sent_today(db, mailbox, now) >= mailbox.daily_limit:
+                other = pick_mailbox(db, campaign, now, exclude=mailbox.id, need_room=True)
             if other:
                 mailbox = db.scalar(select(EmailAccount).where(EmailAccount.id == other).with_for_update())
                 sm.email_account_id = cc.email_account_id = other

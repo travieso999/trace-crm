@@ -281,6 +281,50 @@ def test_daily_limit_and_window_defer(client, db, outbox, compliance):
         "outside sending window (mailbox schedule)"
 
 
+def _second_mailbox(client, db, daily_limit: int) -> str:
+    r = client.post("/api/email-accounts/sandbox", json={"email": "second@trace.studio", "display_name": "Alex at Trace"})
+    assert r.status_code == 201, r.text
+    mid = r.json()["id"]
+    assert client.patch(f"/api/email-accounts/{mid}", json={"schedule": ALWAYS, "daily_limit": daily_limit}).status_code == 200
+    db.execute(EmailAccount.__table__.update().values(min_interval_seconds=0))
+    db.commit()
+    return mid
+
+
+def _sent_per_mailbox(db) -> dict[str, int]:
+    rows = db.execute(select(SentMessage.from_email, func.count()).group_by(SentMessage.from_email)).all()
+    return {email_: n for email_, n in rows}
+
+
+def test_campaign_with_two_mailboxes_uses_both(client, db, outbox, compliance):
+    """One campaign, two mailboxes, a limit of 2 each: a batch of 4 new leads sends 2 from each, not 2 then stall."""
+    a = setup_mailbox(client, db, daily_limit=2)
+    b = _second_mailbox(client, db, daily_limit=2)
+    ids = make_contacts(client, *(f"lead{i}@acmebail.com" for i in range(5)))
+    cid = setup_campaign(client, a, ids, start=False)
+    assert client.patch(f"/api/campaigns/{cid}", json={"mailbox_ids": [a, b]}).status_code == 200
+    assert client.post(f"/api/campaigns/{cid}/start").status_code == 200
+    assert sending.send_due() == {"sent": 4, "deferred": 1}
+    db.expire_all()
+    assert _sent_per_mailbox(db) == {MAILBOX: 2, "second@trace.studio": 2}
+
+
+def test_full_mailbox_hands_new_leads_to_another(client, db, outbox, compliance):
+    """Leads already queued on a mailbox that is full move to a campaign mailbox with room, if nothing was sent yet."""
+    a = setup_mailbox(client, db, daily_limit=1)
+    ids = make_contacts(client, "a@acmebail.com", "b@acmebail.com", "c@acmebail.com")
+    cid = setup_campaign(client, a, ids)
+    assert sending.send_due() == {"sent": 1, "deferred": 2}  # all three were queued on the only mailbox
+    b = _second_mailbox(client, db, daily_limit=5)
+    assert client.patch(f"/api/campaigns/{cid}", json={"mailbox_ids": [a, b]}).status_code == 200
+    db.execute(ScheduledMessage.__table__.update().where(ScheduledMessage.status == "queued")
+               .values(due_at=utcnow() - timedelta(minutes=1)))
+    db.commit()
+    assert sending.send_due() == {"sent": 2}
+    db.expire_all()
+    assert _sent_per_mailbox(db) == {MAILBOX: 1, "second@trace.studio": 2}
+
+
 def test_pause_resume_and_stop(client, db, outbox, compliance):
     mid = setup_mailbox(client, db)
     ids = make_contacts(client, "a@acmebail.com")

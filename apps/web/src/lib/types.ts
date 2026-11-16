@@ -653,7 +653,7 @@ export type ActivityItem = { id: string; type: string; summary: string; at: stri
 
 export type AppNotification = {
   id: string;
-  kind: "task_reminder" | "task_overdue" | "security" | "mailbox" | "assignment" | "demo_completed";
+  kind: "task_reminder" | "task_overdue" | "security" | "mailbox" | "assignment" | "demo_completed" | "suppression";
   title: string;
   body: string | null;
   contact_id: string | null;

@@ -10,6 +10,7 @@ from app.models import SuppressionEntry, User
 from app.schemas.common import Message, Page
 from app.schemas.mail import SuppressionIn, SuppressionOut
 from app.services import campaigns as campaign_service
+from app.services import suppression_alerts
 from app.services.normalize import InvalidEmail, normalize_email
 
 router = APIRouter(prefix="/api/suppressions", tags=["suppressions"])
@@ -40,6 +41,7 @@ def list_suppressions(
 @router.post("")
 def add_suppressions(body: SuppressionIn, request: Request, user: User = Depends(writer), db: Session = Depends(get_db)):
     added, existing, invalid = 0, 0, []
+    added_emails: list[str] = []
     stopped = 0
     seen: set[str] = set()
     for raw in body.emails:
@@ -56,10 +58,12 @@ def add_suppressions(body: SuppressionIn, request: Request, user: User = Depends
             existing += 1
             continue
         db.add(SuppressionEntry(email=email_addr, reason=body.reason, source="manual", created_by=user.id))
+        added_emails.append(email_addr)
         stopped += campaign_service.stop_email_everywhere(db, email_addr, f"suppressed_{body.reason}",
                                                           STOP_STATUS.get(body.reason, "stopped"))
         added += 1
     audit(db, user, "suppression.added", "suppression", None, request, added=added, reason=body.reason)
+    suppression_alerts.notify_bulk(db, added_emails, body.reason, user)
     db.commit()
     return {"added": added, "already_suppressed": existing, "invalid": invalid[:50], "enrollments_stopped": stopped}
 

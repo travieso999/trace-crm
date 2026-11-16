@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.crypto import unsign
 from app.core.db import get_db
 from app.models import Contact, EmailEvent, SuppressionEntry
-from app.services import app_settings
+from app.services import app_settings, suppression_alerts
 from app.services import campaigns as campaign_service
 from app.services.contacts import log_activity
 
@@ -90,6 +90,7 @@ def unsubscribe(token: str, db: Session = Depends(get_db)):
         return _page(company, "Link not valid", "<p>This unsubscribe link is invalid.</p>", 404)
     if not db.scalar(select(SuppressionEntry.id).where(SuppressionEntry.email == contact.email)):
         db.add(SuppressionEntry(email=contact.email, reason="unsubscribe", source="unsubscribe link"))
+        suppression_alerts.notify_added(db, contact.email, "unsubscribe", "unsubscribe link")
         campaign_service.stop_email_everywhere(db, contact.email, "unsubscribed", "unsubscribed")
         db.add(EmailEvent(type="unsubscribed", contact_id=contact.id, campaign_id=campaign_id, data={"via": "link"}))
         log_activity(db, contact.id, "unsubscribe", "Unsubscribed via link")

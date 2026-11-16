@@ -33,7 +33,7 @@ from app.models import (
 from app.models.base import utcnow
 from app.providers import get_provider
 from app.providers.base import InboundRaw, ProviderAuthError, ProviderError
-from app.services import app_settings, mailbox_alerts
+from app.services import app_settings, mailbox_alerts, suppression_alerts
 from app.services import campaigns as campaign_service
 from app.services.contacts import log_activity, set_lead_status
 from app.services.sending import get_or_create_conversation
@@ -176,6 +176,7 @@ def match(db: Session, account: EmailAccount, item: InboundRaw, p: dict) -> Sent
 def suppress(db: Session, email_addr: str, reason: str, source: str) -> None:
     if not db.scalar(select(SuppressionEntry.id).where(SuppressionEntry.email == email_addr)):
         db.add(SuppressionEntry(email=email_addr, reason=reason, source=source))
+        suppression_alerts.notify_added(db, email_addr, reason, source)
         db.flush()
 
 

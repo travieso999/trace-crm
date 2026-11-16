@@ -13,6 +13,6 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Skip API/unsubscribe proxying, Next internals and static files
-  matcher: ["/((?!api/|u/|_next/|favicon.ico|.*\\.(?:svg|png|jpg|ico|webp)$).*)"],
+  // Skip API/unsubscribe/tracked-link proxying, Next internals and static files
+  matcher: ["/((?!api/|u/|t/|_next/|favicon.ico|.*\\.(?:svg|png|jpg|ico|webp)$).*)"],
 };

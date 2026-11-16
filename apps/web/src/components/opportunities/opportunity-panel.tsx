@@ -20,8 +20,9 @@ import { OverviewTab } from "./overview-tab";
 import { DirtyContext, money } from "./shared";
 import { OwnerChip } from "@/components/team";
 import { TasksTab } from "./tasks-tab";
+import { EngagementTimelineView } from "@/components/engagement";
 
-export const PANEL_TABS = ["overview", "tasks", "notes", "activity"] as const;
+export const PANEL_TABS = ["overview", "engagement", "tasks", "notes", "activity"] as const;
 export type PanelTab = (typeof PANEL_TABS)[number];
 
 const STATUS_STYLE: Record<string, string> = {
@@ -129,6 +130,7 @@ export function OpportunityPanel({ contactId, tab, stages, canWrite, onTab, onCl
                 <div className="border-b px-5 sm:px-7">
                   <TabsList variant="line" className="h-11 gap-4">
                     <TabsTrigger value="overview">Overview</TabsTrigger>
+                    <TabsTrigger value="engagement">Engagement</TabsTrigger>
                     <TabsTrigger value="tasks">Tasks{d && d.open_tasks > 0 && <span className="ml-1 rounded-full bg-primary/15 px-1.5 text-[11px] text-signal tabular-nums">{d.open_tasks}</span>}</TabsTrigger>
                     <TabsTrigger value="notes">Notes</TabsTrigger>
                     <TabsTrigger value="activity">Activity</TabsTrigger>
@@ -140,6 +142,7 @@ export function OpportunityPanel({ contactId, tab, stages, canWrite, onTab, onCl
                   ) : (
                     <>
                       <TabsContent value="overview" className="animate-page-in"><OverviewTab detail={d} stages={stages} canWrite={canEdit} canAssign={canWrite} onOpenTab={(t) => onTab(t as PanelTab)} /></TabsContent>
+                      <TabsContent value="engagement" className="animate-page-in"><EngagementTimelineView contactId={d.id} /></TabsContent>
                       <TabsContent value="tasks" className="animate-page-in"><TasksTab contactId={d.id} canWrite={canEdit} /></TabsContent>
                       <TabsContent value="notes" className="animate-page-in"><NotesTab contactId={d.id} canWrite={canEdit} /></TabsContent>
                       <TabsContent value="activity" className="animate-page-in"><ActivityTab contactId={d.id} /></TabsContent>

@@ -25,6 +25,14 @@ from tests.test_gmail import ALWAYS, FakeGoogle, connect
 from tests.test_sending import due_now, make_contacts, outbox, sent_files, setup_campaign, setup_mailbox  # noqa: F401
 
 
+@pytest.fixture(autouse=True)
+def _untracked_links(db):
+    """These tests check where the video link goes in the email; real sends would carry a tracked link to it
+    (covered in tests/test_tracking.py)."""
+    app_settings.update_section(db, "tracking", {"click_tracking": False})
+    db.commit()
+
+
 def real_image(size=(320, 180), fmt="JPEG") -> bytes:
     out = io.BytesIO()
     Image.new("RGB", size, (30, 90, 160)).save(out, fmt)

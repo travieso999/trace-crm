@@ -11,7 +11,7 @@ from app.core.logging import log
 from app.models import EmailAccount
 from app.models.base import utcnow
 from app.services import campaigns as campaign_service
-from app.services import inbound, reminders, sending
+from app.services import inbound, reminders, sending, tracking
 
 logger = logging.getLogger("app.engine")
 
@@ -43,6 +43,14 @@ def sync_due(force: bool = False) -> int:
     return sum(inbound.sync_mailbox(i).get("processed", 0) for i in ids)
 
 
+def purge_tracking() -> dict:
+    """Raw click/open/demo events past the retention period (Settings → Tracking)."""
+    with SessionLocal() as db:
+        out = tracking.purge(db)
+        db.commit()
+        return out
+
+
 def tick(force_sync: bool = False) -> dict:
     result = {
         "activated": activate_scheduled(),
@@ -51,6 +59,7 @@ def tick(force_sync: bool = False) -> dict:
         "reconciled": sending.reconcile_unknown(),
         "reminders": reminders.tick(),
         "audience": sync_audiences(),
+        "tracking_purged": purge_tracking(),
     }
     if result["activated"] or result["replies"] or result["sends"] or result["reminders"] or result["audience"]:
         log(logger, logging.INFO, "engine_tick", **{k: v for k, v in result.items() if v})

@@ -45,7 +45,7 @@ from app.providers.base import (
     SendResult,
 )
 from app.providers.mime import new_message_id
-from app.services import app_settings, mailbox_alerts, video_assets
+from app.services import app_settings, mailbox_alerts, tracking, video_assets
 from app.services import campaigns as campaign_service
 from app.services.contacts import is_suppressed, log_activity, set_lead_status, template_variables
 from app.services.rendering import MissingVariables, Rendered, render_email, render_string, signature_to_text, uses_signature
@@ -375,6 +375,8 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
                               email_account_id=mailbox.id, data={"reason": str(exc)}))
             db.commit()
             return "missing_variables"
+        # per-recipient tracked links (and the open pixel, when on); a retry reuses the same tokens
+        rendered = tracking.apply_to_email(db, rendered, sm, contact.id)
 
         rfc_id = new_message_id(mailbox.email)
         sm.status, sm.reserved_at, sm.rfc_message_id, sm.last_error = "sending", now, rfc_id, None
@@ -540,6 +542,7 @@ def record_success(sm_id: uuid.UUID, result: SendResult, rendered: Rendered) -> 
         )
         db.add(sent)
         db.flush()
+        tracking.attach_sent(db, sm.id, sent.id)
         db.add(EmailEvent(type="accepted", contact_id=contact.id, campaign_id=campaign.id, email_account_id=mailbox.id,
                           sent_message_id=sent.id, data={"step": step.position}))
         sm.status, sm.last_error = "sent", None
@@ -594,6 +597,8 @@ def reconcile_unknown(now: datetime | None = None) -> dict:
                 continue
             rendered = render_step(db, db.get(Campaign, sm.campaign_id), db.get(SequenceStep, sm.sequence_step_id),
                                    cc, db.get(Contact, cc.contact_id), mailbox)
+            rendered = tracking.apply_to_email(db, rendered, sm, cc.contact_id)  # the tokens already sent
+            db.commit()
         record_success(sm_id, found, rendered)
         out["sent"] += 1
     return out

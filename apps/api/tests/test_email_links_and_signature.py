@@ -17,6 +17,15 @@ from tests.test_sending import make_contacts, outbox, sent_files, setup_campaign
 VIDEO = VideoLink("https://videos.example.com/1", None, "Watch")
 
 
+@pytest.fixture(autouse=True)
+def _untracked_links(db):
+    """These tests check how links are rendered; real sends would carry tracked links (tests/test_tracking.py)."""
+    from app.services import app_settings
+
+    app_settings.update_section(db, "tracking", {"click_tracking": False})
+    db.commit()
+
+
 def test_a_link_on_words_is_a_real_link_and_the_plain_text_keeps_the_address():
     r = render_email("S", "See [our work](https://trace-studio.tech/a?x=1&y=2) today", {})
     assert '<a href="https://trace-studio.tech/a?x=1&amp;y=2">our work</a>' in r.html

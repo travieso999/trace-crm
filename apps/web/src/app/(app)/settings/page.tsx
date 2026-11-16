@@ -158,6 +158,36 @@ export default function SettingsPage() {
             </>
           )}
         </Section>
+        <Section name="tracking" title="Tracking" description="Per-recipient link tracking for campaign emails and the demo. Changes apply to emails sent from now on." value={s.tracking} readOnly={ro}>
+          {(d, set) => (
+            <>
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" className={`${checkbox} mt-0.5`} checked={d.click_tracking} onChange={(e) => set({ click_tracking: e.target.checked })} />
+                <span>Track link clicks<span className="block text-xs text-muted-foreground">Each recipient gets their own links. Unsubscribe, sign-in and password links are never changed.</span></span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" className={`${checkbox} mt-0.5`} checked={d.open_tracking} onChange={(e) => set({ open_tracking: e.target.checked })} />
+                <span>Track opens (estimate)<span className="block text-xs text-muted-foreground">Adds a 1×1 image. Opens are unreliable (Apple Mail privacy, image proxies) and pixels can hurt deliverability.</span></span>
+              </label>
+              <Field label="Demo links" htmlFor="t-demo" hint="One per line. Links starting with these count as the demo, e.g. “Watch 360° Demo”.">
+                <Textarea id="t-demo" rows={2} className="font-mono text-[13px]" value={d.demo_urls.join("\n")}
+                  onChange={(e) => set({ demo_urls: e.target.value.split("\n").map((u) => u.trim()) })} />
+              </Field>
+              <Field label="Sites allowed to report demo activity" htmlFor="t-origins" hint="One per line, https:// only.">
+                <Textarea id="t-origins" rows={1} className="font-mono text-[13px]" value={d.demo_origins.join("\n")}
+                  onChange={(e) => set({ demo_origins: e.target.value.split("\n").map((u) => u.trim()) })} />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Scanner window (seconds)" htmlFor="t-window" hint="Clicks this soon after sending are flagged.">
+                  <Input id="t-window" type="number" min={0} max={600} value={d.scanner_window_seconds} onChange={(e) => set({ scanner_window_seconds: Number(e.target.value) })} />
+                </Field>
+                <Field label="Keep raw events (days)" htmlFor="t-retain" hint="Timeline entries stay.">
+                  <Input id="t-retain" type="number" min={30} max={3650} value={d.retention_days} onChange={(e) => set({ retention_days: Number(e.target.value) })} />
+                </Field>
+              </div>
+            </>
+          )}
+        </Section>
         <Section name="company" title="Company" value={s.company} readOnly={ro}>
           {(d, set) => (
             <>

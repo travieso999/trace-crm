@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-// The browser always talks to this origin; /api/* and /u/* (unsubscribe pages) are proxied to FastAPI.
+// The browser always talks to this origin; /api/*, /u/* (unsubscribe pages) and /t/* (tracked links) are proxied to FastAPI.
 // In production Caddy routes those paths straight to the API container, so these rewrites only matter
 // for `next dev` / `next start` without the reverse proxy.
 const API_URL = process.env.API_URL ?? "http://127.0.0.1:8000";
@@ -50,6 +50,8 @@ const nextConfig: NextConfig = {
     return [
       { source: "/api/:path*", destination: `${API_URL}/api/:path*` },
       { source: "/u/:path*", destination: `${API_URL}/u/:path*` },
+      // tracked email links and the open pixel
+      { source: "/t/:path*", destination: `${API_URL}/t/:path*` },
     ];
   },
   async headers() {

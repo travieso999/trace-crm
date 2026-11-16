@@ -336,7 +336,11 @@ def test_pause_resume_and_stop(client, db, outbox, compliance):
     assert client.post(f"/api/campaigns/{cid}/stop").json()["status"] == "stopped"
     due_now(db, cid)
     assert sending.send_due() == {}
-    assert client.patch(f"/api/campaigns/{cid}", json={"name": "x"}).status_code == 409
+    # a finished campaign can be renamed, but nothing that affects sending can change
+    r = client.patch(f"/api/campaigns/{cid}", json={"name": "  TX bail bonds (Nov)  "})
+    assert r.status_code == 200 and r.json()["name"] == "TX bail bonds (Nov)"
+    assert client.patch(f"/api/campaigns/{cid}", json={"name": "   "}).status_code == 422
+    assert client.patch(f"/api/campaigns/{cid}", json={"daily_limit": 5}).status_code == 409
     dup = client.post(f"/api/campaigns/{cid}/duplicate").json()
     assert dup["status"] == "draft" and len(dup["steps"]) == 2 and dup["mailbox_ids"] == [mid]
 

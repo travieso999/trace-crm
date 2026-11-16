@@ -191,9 +191,14 @@ def get_campaign(campaign_id: uuid.UUID, _: User = Depends(reader), db: Session 
 def update_campaign(campaign_id: uuid.UUID, body: CampaignIn, request: Request, user: User = Depends(writer),
                     db: Session = Depends(get_db)):
     c = _get(db, campaign_id)
-    if c.status in ("completed", "stopped"):
-        raise HTTPException(409, "Finished campaigns cannot be edited; duplicate it instead")
     data = body.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        data["name"] = data["name"].strip()
+        if not data["name"]:
+            raise HTTPException(422, "The campaign name can't be empty")
+    # a finished campaign can still be renamed or re-described; nothing that affects sending can change
+    if c.status in ("completed", "stopped") and not set(data) <= {"name", "description"}:
+        raise HTTPException(409, "Finished campaigns cannot be edited; duplicate it instead")
     _apply(db, c, data)
     if data.get("schedule"):
         svc.release_window_waits(db, campaign_id=c.id)

@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Archive, ArchiveRestore, ArrowLeft, CheckCircle2, CircleAlert, Copy, Download, FileSpreadsheet, Filter, MailPlus, MoreHorizontal, Pause, Play, Rocket, Square, Trash2, Upload, UserPlus } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, Check, CheckCircle2, CircleAlert, Copy, Download, FileSpreadsheet, Filter, MailPlus, MoreHorizontal, Pause, Pencil, Play, Rocket, Square, Trash2, Upload, UserPlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -38,6 +39,65 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
         {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
+  );
+}
+
+/** The campaign title, with a pencil to rename it in place (Enter saves, Escape cancels). */
+function CampaignName({ campaign, canEdit }: { campaign: Campaign; canEdit: boolean }) {
+  const qc = useQueryClient();
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const rename = useMutation({
+    mutationFn: (name: string) => api<Campaign>(`/api/campaigns/${campaign.id}`, { method: "PATCH", body: { name } }),
+    onSuccess: (c) => {
+      qc.setQueryData(["campaign", campaign.id], c);
+      qc.invalidateQueries({ queryKey: ["campaigns"] });
+      setDraft(null);
+      toast.success("Campaign renamed");
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
+  const save = () => {
+    const name = (draft ?? "").trim();
+    if (!name || name === campaign.name) return setDraft(null);
+    rename.mutate(name);
+  };
+
+  if (draft === null)
+    return (
+      <>
+        <h1 className="truncate text-xl font-semibold tracking-tight">{campaign.name}</h1>
+        {canEdit && (
+          <Button variant="ghost" size="icon-sm" aria-label="Rename campaign" title="Rename campaign" onClick={() => setDraft(campaign.name)}>
+            <Pencil />
+          </Button>
+        )}
+      </>
+    );
+  return (
+    <form
+      className="flex items-center gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        save();
+      }}
+    >
+      <Input
+        autoFocus
+        aria-label="Campaign name"
+        maxLength={200}
+        className="h-8 w-72 max-w-full text-base font-semibold"
+        value={draft}
+        disabled={rename.isPending}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => e.key === "Escape" && setDraft(null)}
+      />
+      <Button type="submit" variant="ghost" size="icon-sm" aria-label="Save name" disabled={rename.isPending || !draft.trim()}>
+        <Check />
+      </Button>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="Cancel" onClick={() => setDraft(null)}>
+        <X />
+      </Button>
+    </form>
   );
 }
 
@@ -250,7 +310,7 @@ function CampaignDetail() {
       <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-xl font-semibold tracking-tight">{c.name}</h1>
+            <CampaignName campaign={c} canEdit={canWrite} />
             <StatusBadge status={st} />
             {c.archived_at && <StatusBadge status="archived" />}
           </div>

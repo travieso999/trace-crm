@@ -7,6 +7,7 @@ and the visit shows up on that prospect, in Engaged Prospects and in the CRM.
 import copy
 import json
 import re
+import uuid
 from datetime import timedelta
 
 import pytest
@@ -14,7 +15,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 
 from app.core.config import get_settings
-from app.models import Contact, CrmActivity, Notification, SentMessage, SiteEvent, SiteVisitor, TrackedLink
+from app.models import (
+    Contact,
+    CrmActivity,
+    Notification,
+    SentMessage,
+    SiteEvent,
+    SiteVisitor,
+    TrackedLink,
+    TrackingEvent,
+)
 from app.models.base import utcnow
 from app.services import sending, site_tracking, tracking
 from tests.test_sending import make_contacts, outbox, sent_files, setup_campaign, setup_mailbox  # noqa: F401
@@ -239,6 +249,18 @@ def test_sample_payload_lands_on_the_right_prospect_and_counts_update(client, db
     assert db.scalar(select(Notification.kind).where(Notification.kind == "demo_completed")) == "demo_completed"
 
 
+def test_half_the_video_counts_as_watched_a_quarter_does_not(client, db, website, secret):
+    quarter, half = make_contacts(client, "quarter@one.com", "half@two.com")
+    post(website, batch(rid=quarter, vid="v-q", sid="s-q", events=[
+        ev("session_start", "10:00"), ev("video_progress", "10:01", percent=25, watched_seconds=30)]))
+    post(website, batch(rid=half, vid="v-h", sid="s-h", events=[
+        ev("session_start", "10:00"), ev("video_progress", "10:02", percent=50, watched_seconds=60)]))
+    assert engaged_row(client, quarter)["watched_video"] == 0
+    assert engaged_row(client, half)["watched_video"] == 1
+    kinds = [a.type for a in db.scalars(select(CrmActivity).where(CrmActivity.contact_id == half))]
+    assert "site_video_watched" in kinds
+
+
 def test_callback_request_makes_the_prospect_high_puts_them_first_and_alerts(client, db, website, secret):
     early, hot = make_contacts(client, "early@one.com", "hot@two.com")
     # "early" watched the video (Medium) more recently than "hot" did anything
@@ -365,3 +387,81 @@ def test_sent_message_campaign_is_attributed(client, db, website, secret, outbox
     assert {str(c) for c in db.scalars(select(SiteEvent.campaign_id))} == {camp}
     rows = client.get("/api/tracking/engaged", params={"campaign_id": camp}).json()["items"]
     assert [r["contact_id"] for r in rows] == [cid]
+
+
+def test_hiding_a_prospect_until_they_engage_again(client, db, website, secret):
+    (cid,) = make_contacts(client, "tested@one.com")
+    post(website, batch(rid=cid, vid="v-hide", sid="s-1", events=[ev("session_start", "10:00")]))
+    db.execute(update(SiteEvent).values(occurred_at=utcnow() - timedelta(days=2)))  # the visit was two days ago
+    db.commit()
+    assert engaged_row(client, cid)
+
+    assert client.post(f"/api/tracking/engaged/{cid}/hidden").status_code == 204
+    listed = client.get("/api/tracking/engaged").json()
+    assert engaged_row(client, cid) is None and listed["hidden"] == 1
+    [row] = client.get("/api/tracking/engaged", params={"hidden": "true"}).json()["items"]
+    assert row["contact_id"] == cid and row["hidden_at"]
+    assert db.scalar(select(SiteEvent.id).where(SiteEvent.contact_id == cid))  # their history is kept
+
+    # a new visit after hiding brings them back (the sample's times are later than now)
+    post(website, batch(rid=cid, vid="v-hide", sid="s-2", events=[ev("session_start", "11:00")]))
+    assert engaged_row(client, cid) and client.get("/api/tracking/engaged").json()["hidden"] == 0
+
+    # hide again, then show again by hand
+    client.post(f"/api/tracking/engaged/{cid}/hidden")
+    assert engaged_row(client, cid) is None
+    assert client.delete(f"/api/tracking/engaged/{cid}/hidden").status_code == 204
+    assert engaged_row(client, cid)
+    assert client.post(f"/api/tracking/engaged/{uuid.uuid4()}/hidden").status_code == 404
+
+
+PHONE = {"User-Agent": SAMPLE["user_agent"]}
+
+
+def test_email_tracking_and_engaged_prospects_agree(client, db, website, secret, outbox, compliance):  # noqa: F811
+    steps = [{"subject": "Demo", "body": "Hi {{first_name}}\n\n[Watch](https://trace-studio.tech/demo)\n\nBest,\nSam"}]
+    mid = setup_mailbox(client, db)
+    hot, quiet = make_contacts(client, "hot@one.com", "quiet@two.com")
+    camp = setup_campaign(client, mid, [hot, quiet], steps=steps)
+    assert sending.send_due() == {"sent": 2}
+
+    # clicked on the phone seconds after it arrived: looks like a security scanner at first
+    link = db.scalar(select(TrackedLink).where(TrackedLink.contact_id == hot, TrackedLink.kind == "demo"))
+    assert website.get(f"/t/{link.token}", follow_redirects=False, headers=PHONE).status_code == 302
+    click = db.scalar(select(TrackingEvent).where(TrackingEvent.link_id == link.id))
+    assert click.suspected_bot and not click.verified_human
+
+    # ...then the website reports them watching, starting and completing the application
+    post(website, batch(rid=hot, events=[ev("session_start", "04:00"), *JOURNEY]))
+    db.refresh(click)
+    assert click.verified_human  # the visit proves a person clicked
+
+    emails = {r["contact_id"]: r for r in client.get("/api/tracking/emails", params={"campaign_id": camp}).json()["items"]}
+    engaged = engaged_row(client, hot)
+    for key in ("demo_clicks", "demo_visits", "demo_completed", "watched_video"):
+        assert emails[hot][key] == engaged[key], key
+    assert (engaged["demo_clicks"], engaged["demo_visits"], engaged["demo_completed"], engaged["watched_video"]) == (1, 1, 1, 1)
+    summary = client.get("/api/tracking/emails", params={"campaign_id": camp}).json()["summary"]
+    assert (summary["clicked"], summary["demo_clicked"], summary["demo_visited"], summary["demo_completed"]) == (1, 1, 1, 1)
+    assert emails[quiet]["demo_visits"] == 0 and engaged_row(client, quiet) is None
+
+
+def test_who_clicked_but_did_not_apply_or_reply(client, db, website, secret, outbox, compliance):  # noqa: F811
+    steps = [{"subject": "Demo", "body": "Hi\n\n[Watch](https://trace-studio.tech/demo)\n\nBest,\nSam"}]
+    mid = setup_mailbox(client, db)
+    browsed, applied = make_contacts(client, "browsed@one.com", "applied@two.com")
+    camp = setup_campaign(client, mid, [browsed, applied], steps=steps)
+    assert sending.send_due() == {"sent": 2}
+    post(website, batch(rid=browsed, vid="v-b", sid="s-b", events=[ev("session_start", "04:00")]))
+    post(website, batch(rid=applied, vid="v-a", sid="s-a", events=[ev("session_start", "04:00"), *JOURNEY]))
+
+    def ids(**params):
+        return {r["contact_id"] for r in client.get("/api/tracking/engaged", params=params).json()["items"]}
+
+    assert ids(outcome="no_application") == {browsed}
+    assert ids(outcome="no_reply") == {browsed, applied}
+    assert ids(outcome="no_application_no_reply") == {browsed}
+    assert ids(outcome="completed") == {applied}
+    assert ids(outcome="replied") == set()
+    rows = client.get("/api/tracking/emails", params={"campaign_id": camp, "demo": "not_completed"}).json()["items"]
+    assert [r["contact_id"] for r in rows] == [browsed]

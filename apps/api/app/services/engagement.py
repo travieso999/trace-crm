@@ -8,7 +8,7 @@ Counting rules (shown in the UI too):
   viewing a page (starting the application, a form, signing, submitting).
 * website batches from trace-studio.tech (services/site_tracking.py) add to these: a demo visit is a website session
   with ``session_start`` or a page under /demos/; completed is ``application_completed``; watched video is
-  ``video_progress`` >= 75% or ``video_complete``; a ``callback_request`` makes the prospect High and puts them first.
+  ``video_progress`` >= 50% or ``video_complete``; a ``callback_request`` makes the prospect High and puts them first.
 """
 
 import uuid
@@ -16,7 +16,7 @@ from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import Integer, and_, case, cast, distinct, exists, func, literal, or_, select, union
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models import (
     Campaign,
@@ -29,6 +29,7 @@ from app.models import (
     DemoEvent,
     DemoSession,
     EmailEvent,
+    EngagedHidden,
     ReceivedMessage,
     SentMessage,
     SequenceStep,
@@ -37,6 +38,7 @@ from app.models import (
     TrackingEvent,
     User,
 )
+from app.models.base import utcnow
 from app.services import site_tracking
 from app.services.tracking import INTERACTIONS, human_click_filter
 
@@ -94,15 +96,58 @@ def _demo_agg():
     )
 
 
+def site_rules(t):
+    """What counts on trace-studio.tech, for ``SiteEvent`` or a subquery with its columns: (visit, watched video,
+    interaction). Email Tracking and Engaged Prospects both use these, so their numbers agree."""
+    visit = or_(t.type == "session_start", and_(t.type == "page_view", t.page.like("/demos/%")))
+    watched = or_(t.type == "video_complete",
+                  and_(t.type == "video_progress", t.data["percent"].astext.in_(site_tracking.WATCHED_PERCENTS)))
+    interaction = or_(t.type.in_(site_tracking.INTERACTIONS),
+                      and_(t.type == "click", t.data["kind"].astext.in_(site_tracking.CONTACT_TAPS)))
+    return visit, watched, interaction
+
+
+CLOCK_SLACK = timedelta(minutes=5)
+
+
+def _site_agg():
+    """Website activity per campaign email: each event goes to the latest campaign email the prospect had been sent
+    before it (same campaign when known). Activity before any campaign email isn't on an email row."""
+    S, SM = SiteEvent, aliased(SentMessage)  # noqa: N806
+    sent_for = (select(SM.id).where(SM.contact_id == S.contact_id, SM.kind == "sequence",
+                                    or_(S.campaign_id.is_(None), SM.campaign_id == S.campaign_id),
+                                    SM.sent_at <= S.occurred_at + CLOCK_SLACK)
+                .order_by(SM.sent_at.desc()).limit(1).correlate(S).scalar_subquery())
+    t = select(sent_for.label("sent_id"), S.sid, S.type, S.page, S.data, S.occurred_at) \
+        .where(S.contact_id.is_not(None)).subquery()
+    visit, watched, interaction = site_rules(t.c)
+    return (
+        select(
+            t.c.sent_id.label("sid"),
+            func.count(distinct(t.c.sid)).filter(visit).label("visits"),
+            func.count(distinct(t.c.sid)).filter(interaction).label("interactions"),
+            func.count(distinct(t.c.sid)).filter(t.c.type == "application_completed").label("completed"),
+            func.count(distinct(t.c.sid)).filter(watched).label("watched"),
+            func.max(t.c.occurred_at).label("last_site"),
+        )
+        .where(t.c.sent_id.is_not(None)).group_by(t.c.sent_id).subquery()
+    )
+
+
 def email_rows(db: Session, *, campaign_id: uuid.UUID | None = None, q: str | None = None,
                date_from: date | None = None, date_to: date | None = None, clicked: str | None = None,
                demo: str | None = None, contact_id: uuid.UUID | None = None, sort: str = "sent",
                page: int = 1, page_size: int = 50) -> dict:
-    c, d = _click_agg(), _demo_agg()
+    c, d, w = _click_agg(), _demo_agg(), _site_agg()
     bounced = exists().where(EmailEvent.type == "bounced", EmailEvent.contact_id == SentMessage.contact_id,
                              EmailEvent.campaign_id == SentMessage.campaign_id,
                              EmailEvent.occurred_at >= SentMessage.sent_at)
     clicks = func.coalesce(c.c.clicks, 0)
+    n = lambda col: func.coalesce(col, 0)  # noqa: E731
+    visits = n(d.c.demo_visits) + n(w.c.visits)
+    interactions = n(d.c.demo_interactions) + n(w.c.interactions)
+    completed = n(d.c.demo_completed) + n(w.c.completed)
+    demo_clicks = n(c.c.demo_clicks)
     stmt = (
         select(
             SentMessage.id, SentMessage.sent_at, SentMessage.subject, SentMessage.to_email, SentMessage.campaign_id,
@@ -111,14 +156,14 @@ def email_rows(db: Session, *, campaign_id: uuid.UUID | None = None, q: str | No
             clicks.label("clicks"), func.coalesce(c.c.unique_clicks, 0).label("unique_clicks"),
             func.coalesce(c.c.scanner_clicks, 0).label("scanner_clicks"), func.coalesce(c.c.demo_clicks, 0).label("demo_clicks"),
             c.c.first_click, c.c.last_click, c.c.opens, c.c.open_tracked, c.c.links_tracked,
-            func.coalesce(d.c.demo_visits, 0).label("demo_visits"),
-            func.coalesce(d.c.demo_interactions, 0).label("demo_interactions"),
-            func.coalesce(d.c.demo_completed, 0).label("demo_completed"),
+            visits.label("demo_visits"), interactions.label("demo_interactions"), completed.label("demo_completed"),
+            n(w.c.watched).label("watched_video"),
         )
         .join(Contact, Contact.id == SentMessage.contact_id)
         .outerjoin(Campaign, Campaign.id == SentMessage.campaign_id)
         .outerjoin(c, c.c.sid == SentMessage.id)
         .outerjoin(d, d.c.sid == SentMessage.id)
+        .outerjoin(w, w.c.sid == SentMessage.id)
         .outerjoin(CampaignContact, and_(CampaignContact.campaign_id == SentMessage.campaign_id,
                                          CampaignContact.contact_id == SentMessage.contact_id))
         .outerjoin(SequenceStep, SequenceStep.id == select(L.sequence_step_id).where(
@@ -144,13 +189,18 @@ def email_rows(db: Session, *, campaign_id: uuid.UUID | None = None, q: str | No
     elif clicked == "untracked":
         stmt = stmt.where(or_(c.c.links_tracked.is_(None), c.c.links_tracked.is_(False)))
     if demo == "clicked":
-        stmt = stmt.where(func.coalesce(c.c.demo_clicks, 0) > 0)
+        stmt = stmt.where(demo_clicks > 0)
     elif demo == "visited":
-        stmt = stmt.where(func.coalesce(d.c.demo_visits, 0) > 0)
+        stmt = stmt.where(visits > 0)
     elif demo == "interacted":
-        stmt = stmt.where(func.coalesce(d.c.demo_interactions, 0) > 0)
+        stmt = stmt.where(interactions > 0)
     elif demo == "completed":
-        stmt = stmt.where(func.coalesce(d.c.demo_completed, 0) > 0)
+        stmt = stmt.where(completed > 0)
+    elif demo == "watched":
+        stmt = stmt.where(n(w.c.watched) > 0)
+    elif demo == "not_completed":
+        # clicked or visited the demo, but no application
+        stmt = stmt.where(or_(demo_clicks > 0, visits > 0), completed == 0)
 
     base = stmt.subquery()
     totals = db.execute(select(
@@ -207,7 +257,7 @@ def _email_out(r, links: list) -> dict:
         "clicks": r.clicks, "unique_clicks": r.unique_clicks, "scanner_clicks": r.scanner_clicks,
         "demo_clicks": r.demo_clicks, "first_click_at": _iso(r.first_click), "last_click_at": _iso(r.last_click),
         "demo_visits": r.demo_visits, "demo_interactions": r.demo_interactions, "demo_completed": r.demo_completed,
-        "links": links,
+        "watched_video": r.watched_video, "links": links,
     }
 
 
@@ -231,11 +281,7 @@ def _engaged_query(campaign_id: uuid.UUID | None):
         func.max(DemoEvent.occurred_at).label("last_demo"),
     ).outerjoin(DemoEvent, DemoEvent.demo_session_id == DemoSession.id).where(DemoSession.contact_id.is_not(None))
     S = SiteEvent  # noqa: N806
-    site_visit = or_(S.type == "session_start", and_(S.type == "page_view", S.page.like("/demos/%")))
-    watched = or_(S.type == "video_complete",
-                  and_(S.type == "video_progress", S.data["percent"].astext.in_(site_tracking.WATCHED_PERCENTS)))
-    site_interaction = or_(S.type.in_(site_tracking.INTERACTIONS),
-                           and_(S.type == "click", S.data["kind"].astext.in_(site_tracking.CONTACT_TAPS)))
+    site_visit, watched, site_interaction = site_rules(S)
     web = select(
         S.contact_id.label("cid"),
         func.count(distinct(S.sid)).filter(site_visit).label("visits"),
@@ -244,6 +290,7 @@ def _engaged_query(campaign_id: uuid.UUID | None):
         func.count(S.id).filter(site_interaction).label("interactions"),
         func.max(S.occurred_at).filter(S.type == "callback_request").label("callback_at"),
         func.max(S.occurred_at).label("last_site"),
+        func.max(S.received_at).label("arrived_site"),
     ).where(S.contact_id.is_not(None))
     rep = select(
         ReceivedMessage.contact_id.label("cid"), func.count(ReceivedMessage.id).label("replies"),
@@ -272,6 +319,8 @@ def _engaged_query(campaign_id: uuid.UUID | None):
         else_=None,
     )
     last = func.greatest(clk.c.last_click, clk.c.last_open, dem.c.last_demo, rep.c.last_reply, web.c.last_site)
+    # when the latest activity reached us (the website's own clock can run ahead): decides whether a hide still holds
+    arrived = func.greatest(clk.c.last_click, clk.c.last_open, dem.c.last_demo, rep.c.last_reply, web.c.arrived_site)
     open_tasks = select(func.count(CrmTask.id)).where(
         CrmTask.contact_id == Contact.id, CrmTask.completed_at.is_(None)).scalar_subquery()
     stmt = (
@@ -282,6 +331,7 @@ def _engaged_query(campaign_id: uuid.UUID | None):
             completed.label("demo_completed"), n(web.c.watched).label("watched_video"), n(rep.c.replies).label("replies"),
             web.c.callback_at.label("callback_at"), last.label("last_engagement_at"), level.label("level"),
             CrmOpportunity.owner_id, cast(open_tasks, Integer).label("open_tasks"),
+            EngagedHidden.hidden_at.label("hidden_at"), arrived.label("arrived_at"),
         )
         .select_from(ids)
         .join(Contact, Contact.id == ids.c.cid)
@@ -290,9 +340,41 @@ def _engaged_query(campaign_id: uuid.UUID | None):
         .outerjoin(rep, rep.c.cid == ids.c.cid)
         .outerjoin(web, web.c.cid == ids.c.cid)
         .outerjoin(CrmOpportunity, CrmOpportunity.contact_id == Contact.id)
+        .outerjoin(EngagedHidden, EngagedHidden.contact_id == Contact.id)
         .where(Contact.deleted_at.is_(None), level.is_not(None))
     )
     return stmt, level, last
+
+
+def hide(db: Session, contact_id: uuid.UUID, user: User | None) -> None:
+    """Hide from Engaged Prospects until they engage again. Nothing is deleted."""
+    row = db.get(EngagedHidden, contact_id) or EngagedHidden(contact_id=contact_id)
+    row.hidden_at, row.hidden_by_id = utcnow(), user.id if user else None
+    db.add(row)
+
+
+def unhide(db: Session, contact_id: uuid.UUID) -> None:
+    if row := db.get(EngagedHidden, contact_id):
+        db.delete(row)
+
+
+OUTCOMES = ("no_application", "no_reply", "no_application_no_reply", "completed", "replied")
+
+
+def _with_outcome(stmt, outcome: str):
+    """Filter on what happened after the click. "Clicked" means a human click on any tracked link or a visit."""
+    cols = {c.name: c for c in stmt.selected_columns}
+    clicked = or_(cols["clicks"] > 0, cols["demo_visits"] > 0)
+    no_app, no_reply = cols["demo_completed"] == 0, cols["replies"] == 0
+    cond = {"no_application": and_(clicked, no_app), "no_reply": and_(clicked, no_reply),
+            "no_application_no_reply": and_(clicked, no_app, no_reply),
+            "completed": cols["demo_completed"] > 0, "replied": cols["replies"] > 0}.get(outcome)
+    return stmt if cond is None else stmt.where(cond)
+
+
+def _hidden(last):
+    """Hidden, and nothing new has arrived since: engaging again brings a prospect back to the list."""
+    return and_(EngagedHidden.hidden_at.is_not(None), or_(last.is_(None), last <= EngagedHidden.hidden_at))
 
 
 SORTS = ("last_engagement", "demo_clicks", "demo_visits", "demo_completed", "watched_video", "replies", "clicks")
@@ -300,8 +382,13 @@ SORTS = ("last_engagement", "demo_clicks", "demo_visits", "demo_completed", "wat
 
 def engaged(db: Session, *, campaign_id: uuid.UUID | None = None, level: str | None = None,
             owner: str | None = None, me: User | None = None, q: str | None = None, sort: str = "last_engagement",
-            page: int = 1, page_size: int = 50) -> dict:
+            page: int = 1, page_size: int = 50, hidden: bool = False, outcome: str | None = None) -> dict:
     stmt, level_expr, last = _engaged_query(campaign_id)
+    if outcome:
+        stmt = _with_outcome(stmt, outcome)
+    hidden_expr = _hidden(stmt.selected_columns.arrived_at)
+    hidden_count = db.scalar(select(func.count()).select_from(stmt.where(hidden_expr).subquery())) or 0
+    stmt = stmt.where(hidden_expr if hidden else ~hidden_expr)
     if level in LEVELS:
         stmt = stmt.where(level_expr == level)
     if owner == "me" and me:
@@ -338,9 +425,9 @@ def engaged(db: Session, *, campaign_id: uuid.UUID | None = None, level: str | N
             "callback_requested_at": _iso(r.callback_at), "last_engagement_at": _iso(r.last_engagement_at),
             "campaigns": campaigns.get(r.id, []),
             "owner": {"id": str(r.owner_id), "name": owners.get(r.owner_id, "Former user")} if r.owner_id else None,
-            "open_tasks": r.open_tasks or 0,
+            "open_tasks": r.open_tasks or 0, "hidden_at": _iso(r.hidden_at) if hidden else None,
         } for r in rows],
-        "total": total, "page": page, "page_size": page_size,
+        "total": total, "page": page, "page_size": page_size, "hidden": hidden_count,
         "levels": {lv: counts.get(lv, 0) for lv in LEVELS},
     }
 

@@ -3,7 +3,7 @@
 import * as React from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Flame, ListPlus, NotebookPen, PhoneCall, Search } from "lucide-react";
+import { Eye, EyeOff, Flame, ListPlus, NotebookPen, PhoneCall, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,6 +19,11 @@ import { cn } from "@/lib/utils";
 import type { Campaign, EngagedPage, EngagedProspect, EngagementLevel, Stage } from "@/lib/types";
 
 const PAGE_SIZE = 50;
+const OUTCOMES: [string, string][] = [
+  ["", "Any outcome"], ["no_application", "Clicked or visited, no application"],
+  ["no_reply", "Clicked or visited, no reply"], ["no_application_no_reply", "Clicked or visited, no application or reply"],
+  ["completed", "Completed an application"], ["replied", "Replied"],
+];
 const SORTS: [string, string][] = [
   ["last_engagement", "Most recent engagement"], ["demo_clicks", "Demo clicks"], ["demo_visits", "Demo visits"],
   ["demo_completed", "Completed demo applications"], ["watched_video", "Watched the video"], ["replies", "Replies"],
@@ -37,6 +42,8 @@ export default function EngagedProspectsPage() {
   const [search, setSearch] = React.useState("");
   const [q, setQ] = React.useState("");
   const [level, setLevel] = React.useState<"" | EngagementLevel>("");
+  const [showHidden, setShowHidden] = React.useState(false);
+  const [outcome, setOutcome] = React.useState("");
   const [campaign, setCampaign] = React.useState("");
   const [owner, setOwner] = React.useState("");
   const [sort, setSort] = React.useState("last_engagement");
@@ -46,7 +53,7 @@ export default function EngagedProspectsPage() {
     const t = setTimeout(() => setQ(search.trim()), 300);
     return () => clearTimeout(t);
   }, [search]);
-  const resetKey = [q, level, campaign, owner, sort].join("|");
+  const resetKey = [q, level, campaign, owner, sort, showHidden, outcome].join("|");
   const [prevKey, setPrevKey] = React.useState(resetKey);
   if (prevKey !== resetKey) {
     setPrevKey(resetKey);
@@ -58,7 +65,7 @@ export default function EngagedProspectsPage() {
   const list = useQuery({
     queryKey: ["engaged", resetKey, page],
     queryFn: () => api<EngagedPage>("/api/tracking/engaged", {
-      query: { q, level, campaign_id: campaign, owner, sort, page, page_size: PAGE_SIZE },
+      query: { q, level, campaign_id: campaign, owner, sort, page, page_size: PAGE_SIZE, hidden: showHidden || undefined, outcome },
     }),
     placeholderData: keepPreviousData,
   });
@@ -72,10 +79,28 @@ export default function EngagedProspectsPage() {
     },
     onError: (e) => toast.error(errorMessage(e)),
   });
+  // hiding keeps the history; a prospect who engages again comes back on their own
+  const setHidden = useMutation({
+    mutationFn: ({ p, hide }: { p: EngagedProspect; hide: boolean }) =>
+      api(`/api/tracking/engaged/${p.contact_id}/hidden`, { method: hide ? "POST" : "DELETE" }),
+    onSuccess: (_d, { p, hide }) => {
+      qc.invalidateQueries({ queryKey: ["engaged"] });
+      const who = p.name || p.email;
+      if (hide) {
+        toast.success(`${who} hidden`, {
+          description: "Back on the list if they engage again. See them under Hidden.",
+          action: { label: "Undo", onClick: () => setHidden.mutate({ p, hide: false }) },
+        });
+      } else {
+        toast.success(`${who} is back on the list`);
+      }
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  });
 
   const data = list.data;
   const open = (p: EngagedProspect, tab: PanelTab = "engagement") => setPanel({ id: p.contact_id, tab });
-  const filtered = !!(q || level || campaign || owner);
+  const filtered = !!(q || level || campaign || owner || outcome);
   return (
     <>
       <PageHeader title="Engaged Prospects"
@@ -85,15 +110,25 @@ export default function EngagedProspectsPage() {
         {(["", "high", "medium", "low"] as const).map((lv) => {
           const count = lv ? data?.levels[lv] : data ? Object.values(data.levels).reduce((a, b) => a + b, 0) : undefined;
           return (
-            <button key={lv || "all"} type="button" role="tab" aria-selected={level === lv} onClick={() => setLevel(lv)}
+            <button key={lv || "all"} type="button" role="tab" aria-selected={!showHidden && level === lv}
+              onClick={() => { setLevel(lv); setShowHidden(false); }}
               title={lv ? LEVEL_HELP[lv] : undefined}
               className={cn("rounded-full border px-3 py-1 text-sm transition-colors",
-                level === lv ? "border-foreground bg-foreground text-background" : "hover:bg-muted")}>
+                !showHidden && level === lv ? "border-foreground bg-foreground text-background" : "hover:bg-muted")}>
               {lv ? `${lv[0].toUpperCase()}${lv.slice(1)}` : "All"}
               {count != null && <span className="ml-1.5 tabular-nums opacity-70">{num(count)}</span>}
             </button>
           );
         })}
+        {(showHidden || (data?.hidden ?? 0) > 0) && (
+          <button type="button" role="tab" aria-selected={showHidden} onClick={() => { setShowHidden(true); setLevel(""); }}
+            title="Prospects you hid. They come back on their own if they engage again."
+            className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors",
+              showHidden ? "border-foreground bg-foreground text-background" : "text-muted-foreground hover:bg-muted")}>
+            <EyeOff className="size-3.5" aria-hidden />Hidden
+            {data && <span className="tabular-nums opacity-70">{num(data.hidden)}</span>}
+          </button>
+        )}
       </div>
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -105,6 +140,9 @@ export default function EngagedProspectsPage() {
         <NativeSelect aria-label="Campaign" value={campaign} onChange={(e) => setCampaign(e.target.value)}>
           <option value="">All campaigns</option>
           {(campaigns.data ?? []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </NativeSelect>
+        <NativeSelect aria-label="Outcome" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
+          {OUTCOMES.map(([v, label]) => <option key={v || "any"} value={v}>{label}</option>)}
         </NativeSelect>
         <NativeSelect aria-label="Assigned to" value={owner} onChange={(e) => setOwner(e.target.value)}>
           <option value="">Anyone</option>
@@ -122,8 +160,9 @@ export default function EngagedProspectsPage() {
       ) : list.isPending ? (
         <Skeleton className="h-64" />
       ) : data!.items.length === 0 ? (
-        <EmptyState icon={Flame} title={filtered ? "No matches" : "No engaged prospects yet"}
-          description={filtered ? undefined : "Prospects appear here when they click a tracked link, visit or use the demo on trace-studio.tech, or reply. Emails sent before click tracking started can't show clicks."} />
+        <EmptyState icon={showHidden ? EyeOff : Flame}
+          title={showHidden ? "Nothing hidden" : filtered ? "No matches" : "No engaged prospects yet"}
+          description={showHidden || filtered ? undefined : "Prospects appear here when they click a tracked link, visit or use the demo on trace-studio.tech, or reply. Emails sent before click tracking started can't show clicks."} />
       ) : (
         <>
           <div className="overflow-x-auto rounded-xl border">
@@ -135,12 +174,12 @@ export default function EngagedProspectsPage() {
                   <TableHead className="text-right">Demo clicks</TableHead>
                   <TableHead className="hidden sm:table-cell text-right">Demo visits</TableHead>
                   <TableHead className="text-right">Completed</TableHead>
-                  <TableHead className="hidden sm:table-cell text-right" title="Watched at least 75% of the demo video">Watched video</TableHead>
+                  <TableHead className="hidden sm:table-cell text-right" title="Watched at least half of the demo video">Watched video</TableHead>
                   <TableHead className="hidden md:table-cell text-right">Replies</TableHead>
                   <TableHead className="hidden lg:table-cell">Latest engagement</TableHead>
                   <TableHead className="hidden xl:table-cell">Campaigns</TableHead>
                   <TableHead className="hidden md:table-cell">Assigned to</TableHead>
-                  <TableHead className="w-20"><span className="sr-only">Actions</span></TableHead>
+                  <TableHead className="w-28"><span className="sr-only">Actions</span></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className={list.isPlaceholderData ? "opacity-60" : undefined}>
@@ -183,6 +222,14 @@ export default function EngagedProspectsPage() {
                         <Button variant="ghost" size="icon-sm" aria-label={`Notes for ${p.name || p.email}`} title="Notes" onClick={() => open(p, "notes")}>
                           <NotebookPen />
                         </Button>
+                        {canWrite && (
+                          <Button variant="ghost" size="icon-sm" disabled={setHidden.isPending}
+                            aria-label={`${showHidden ? "Show" : "Hide"} ${p.name || p.email}`}
+                            title={showHidden ? "Show on the list again" : "Hide from this list (comes back if they engage again)"}
+                            onClick={() => setHidden.mutate({ p, hide: !showHidden })}>
+                            {showHidden ? <Eye /> : <EyeOff />}
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

@@ -30,6 +30,7 @@ function Demo({ r }: { r: EmailTrackingRow }) {
   const parts = [
     r.demo_clicks > 0 && `${r.demo_clicks} click${r.demo_clicks === 1 ? "" : "s"}`,
     r.demo_visits > 0 && `${r.demo_visits} visit${r.demo_visits === 1 ? "" : "s"}`,
+    r.watched_video > 0 && "watched the video",
     r.demo_interactions > 0 && !r.demo_completed && "interacted",
   ].filter(Boolean);
   return (
@@ -126,8 +127,10 @@ export default function EmailTrackingPage() {
           <option value="">Any demo activity</option>
           <option value="clicked">Clicked the demo</option>
           <option value="visited">Visited the demo</option>
+          <option value="watched">Watched the video</option>
           <option value="interacted">Interacted with the demo</option>
           <option value="completed">Completed the application</option>
+          <option value="not_completed">Clicked or visited, no application</option>
         </NativeSelect>
         <NativeSelect aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value)}>
           <option value="sent">Newest sent</option>

@@ -182,3 +182,16 @@ class SiteEvent(UUIDPk, Base):
     user_agent: Mapped[str | None] = mapped_column(String(300))
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class EngagedHidden(Base):
+    """A prospect someone hid from Engaged Prospects. Hidden until they engage again after ``hidden_at``; their
+    tracking history is kept either way."""
+
+    __tablename__ = "engaged_hidden"
+
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("contacts.id", ondelete="CASCADE"), primary_key=True)
+    hidden_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    hidden_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))

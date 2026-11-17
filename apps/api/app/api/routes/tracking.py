@@ -9,7 +9,9 @@ Public (no session):
 
 Signed in:
 * ``GET /api/tracking/emails``                      Email Tracking table (Outreach permission)
-* ``GET /api/tracking/engaged``                     Engaged Prospects (opportunities permission)
+* ``GET /api/tracking/engaged``                     Engaged Prospects (opportunities permission); ``hidden=true``
+                                                    lists the hidden ones
+* ``POST|DELETE /api/tracking/engaged/<id>/hidden`` hide a prospect until they engage again / show them again
 * ``GET /api/tracking/contacts/<id>/timeline``      a prospect's engagement history; ``raw=true`` adds every event
 * ``GET /api/tracking/site``                        website webhook: address, status, unmatched visitors (secret: admins)
 """
@@ -26,7 +28,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import client_ip, reader, require_perm
+from app.api.deps import audit, client_ip, reader, require_perm
 from app.core import permissions, ratelimit
 from app.core.config import get_settings
 from app.core.db import SessionLocal, get_db
@@ -183,7 +185,7 @@ async def site_events(request: Request):
 def email_tracking(campaign_id: uuid.UUID | None = None, q: str | None = Query(None, max_length=200),
                    date_from: date | None = None, date_to: date | None = None,
                    clicked: str | None = Query(None, pattern="^(yes|no|untracked)$"),
-                   demo: str | None = Query(None, pattern="^(clicked|visited|interacted|completed)$"),
+                   demo: str | None = Query(None, pattern="^(clicked|visited|interacted|completed|watched|not_completed)$"),
                    sort: str = Query("sent", pattern="^(sent|last_click|clicks)$"),
                    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
                    _: User = Depends(require_perm("outreach.access")), db: Session = Depends(get_db)):
@@ -197,12 +199,41 @@ def email_tracking(campaign_id: uuid.UUID | None = None, q: str | None = Query(N
 def engaged_prospects(campaign_id: uuid.UUID | None = None, level: str | None = Query(None, pattern="^(high|medium|low)$"),
                       owner: str | None = Query(None, max_length=40), q: str | None = Query(None, max_length=200),
                       sort: str = Query("last_engagement", pattern=f"^({'|'.join(engagement.SORTS)})$"),
-                      page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200),
+                      page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=200), hidden: bool = False,
+                      outcome: str | None = Query(None, pattern=f"^({'|'.join(engagement.OUTCOMES)})$"),
                       user: User = Depends(require_perm("opportunities.view")), db: Session = Depends(get_db)):
     out = engagement.engaged(db, campaign_id=campaign_id, level=level, owner=owner, me=user, q=q, sort=sort,
-                             page=page, page_size=page_size)
+                             page=page, page_size=page_size, hidden=hidden, outcome=outcome)
     out["settings"] = _public_settings(db)
     return out
+
+
+def _engaged_contact(db: Session, contact_id: uuid.UUID) -> Contact:
+    c = db.get(Contact, contact_id)
+    if c is None or c.deleted_at:
+        raise HTTPException(404, "Prospect not found")
+    return c
+
+
+@router.post("/engaged/{contact_id}/hidden", status_code=204)
+def hide_engaged(contact_id: uuid.UUID, request: Request,
+                 user: User = Depends(require_perm("opportunities.edit_own")), db: Session = Depends(get_db)):
+    """Hide from Engaged Prospects until they engage again. Their history is kept."""
+    _engaged_contact(db, contact_id)
+    engagement.hide(db, contact_id, user)
+    audit(db, user, "engaged.hide", "contact", contact_id, request)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.delete("/engaged/{contact_id}/hidden", status_code=204)
+def unhide_engaged(contact_id: uuid.UUID, request: Request,
+                   user: User = Depends(require_perm("opportunities.edit_own")), db: Session = Depends(get_db)):
+    _engaged_contact(db, contact_id)
+    engagement.unhide(db, contact_id)
+    audit(db, user, "engaged.unhide", "contact", contact_id, request)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/contacts/{contact_id}/timeline")

@@ -767,7 +767,7 @@ export type EmailTrackingRow = {
   delivery: "accepted" | "bounced"; replied_at: string | null; tracked: boolean; opens: number | null;
   clicks: number; unique_clicks: number; scanner_clicks: number; demo_clicks: number;
   first_click_at: string | null; last_click_at: string | null;
-  demo_visits: number; demo_interactions: number; demo_completed: number; links: TrackedLinkStat[];
+  demo_visits: number; demo_interactions: number; demo_completed: number; watched_video: number; links: TrackedLinkStat[];
 };
 
 export type EmailTrackingPage = Page<EmailTrackingRow> & {
@@ -783,10 +783,12 @@ export type EngagedProspect = {
   clicks: number; demo_clicks: number; opens: number; demo_visits: number; demo_interactions: number;
   demo_completed: number; watched_video: number; replies: number; callback_requested_at: string | null;
   last_engagement_at: string | null; campaigns: { id: string; name: string }[];
-  owner: { id: string; name: string } | null; open_tasks: number;
+  owner: { id: string; name: string } | null; open_tasks: number; hidden_at: string | null;
 };
 
-export type EngagedPage = Page<EngagedProspect> & { levels: Record<EngagementLevel, number>; settings: TrackingSettings };
+export type EngagedPage = Page<EngagedProspect> & {
+  levels: Record<EngagementLevel, number>; hidden: number; settings: TrackingSettings;
+};
 
 export type TimelineItem = {
   kind: "email_sent" | "email_opened" | "email_click" | "demo_click" | "demo_visit" | "demo_application_started"

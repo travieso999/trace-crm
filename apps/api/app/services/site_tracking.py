@@ -41,6 +41,7 @@ from app.models import (
     User,
 )
 from app.models.base import utcnow
+from app.services import tracking
 from app.services.normalize import normalize_email
 
 logger = logging.getLogger("app.site_tracking")
@@ -78,7 +79,7 @@ CONTACT_TAPS = ("call", "text", "email", "booking")
 # events that show a person working with the demo or reaching out (High), beyond looking
 INTERACTIONS = ("form_start", "form_step", "form_error", "form_submit", "demo_form", "application_completed",
                 "identify", "callback_request")
-WATCHED_PERCENTS = tuple(str(p) for p in range(75, 101))
+WATCHED_PERCENTS = tuple(str(p) for p in range(50, 101))  # "watched the video" from half way
 
 # Card, bank, PIN and password content. A key like these (with a value) or a card-number-like value drops the event.
 FORBIDDEN_KEY = re.compile(
@@ -422,6 +423,8 @@ def ingest(db: Session, batch: BatchIn, now: datetime | None = None) -> dict:
             notify_callback(db, contact, visitor, ev)
         if ev.type == "application_completed" and ev.id in fresh and contact is not None:
             _notify_completed(db, contact, ev)
+    if contact is not None and (inserted or backfilled):
+        tracking.verify_clicks_by_site_visit(db, contact.id, now)
     db.flush()
     result["matched"] = contact is not None
     result["contact_id"] = str(contact.id) if contact else None

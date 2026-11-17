@@ -437,6 +437,28 @@ def _verify_click(db: Session, session: DemoSession) -> None:
         _log_click(db, db.get(TrackedLink, session.link_id), click)
 
 
+SITE_VISIT_PROVES_CLICK = timedelta(minutes=30)
+
+
+def verify_clicks_by_site_visit(db: Session, contact_id: uuid.UUID, now: datetime) -> int:
+    """trace-studio.tech reported this prospect on the site: a demo-link click of theirs in the half hour before,
+    flagged as a security scanner (usually for being seconds after delivery), was a person after all. A teammate's
+    own click (``crm_user``) stays out."""
+    clicks = db.scalars(
+        select(TrackingEvent).join(TrackedLink, TrackedLink.id == TrackingEvent.link_id)
+        .where(TrackedLink.contact_id == contact_id, TrackedLink.kind == "demo", TrackingEvent.type == "click",
+               TrackingEvent.suspected_bot, TrackingEvent.verified_human.is_(False),
+               TrackingEvent.occurred_at >= now - SITE_VISIT_PROVES_CLICK, TrackingEvent.occurred_at <= now)).all()
+    n = 0
+    for click in clicks:
+        if "crm_user" in (click.bot_reasons or []):
+            continue
+        click.verified_human = True
+        _log_click(db, db.get(TrackedLink, click.link_id), click)
+        n += 1
+    return n
+
+
 def _demo_activity(db: Session, session: DemoSession, event: DemoEvent) -> None:
     sid = str(session.id)
     campaign = _campaign_name(db, session.campaign_id)

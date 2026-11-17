@@ -71,6 +71,7 @@ erDiagram
 | `demo_events` | Demo steps (page view, application started/step/signed/submitted, other forms). Never what the visitor typed | idx `(contact_id, occurred_at)`; purged with tracking events |
 | `site_visitors` | A browser on trace-studio.tech (website's `vid`), matched to a prospect by `rid` or an `identify` email/phone; the name/email/phone the visitor typed about themselves | unique `vid`; `contact_id` set once known (earlier events are then moved to the prospect) |
 | `site_events` | Every step the website forwards (`POST /api/track/site-events`): type, site, page, spec-listed `data` keys only, place, short device name. Never card/bank/PIN/password content | unique `dedupe_key` (content hash: a retried batch adds nothing); idx `(contact_id, occurred_at)`, `(visitor_id, occurred_at)`, `sid`; purged with tracking events |
+| `engaged_hidden` | Prospects someone hid from Engaged Prospects (who, when). Hidden only while nothing new has happened since `hidden_at`; their tracking history is untouched | pk `contact_id` (cascade on prospect delete) |
 
 ## Status enums
 

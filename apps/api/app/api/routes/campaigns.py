@@ -41,7 +41,7 @@ from app.schemas.mail import (
     TemplateOut,
     TestSendIn,
 )
-from app.services import app_settings, campaign_reports, enrollment, import_lists, sending, video_assets
+from app.services import app_settings, campaign_reports, enrollment, import_lists, sending, tracking, video_assets
 from app.services import campaigns as svc
 from app.services.audience import AudienceFilter, contacts_query
 from app.services.contacts import get_or_create_tags, suppressed_set
@@ -62,7 +62,10 @@ SAMPLE_CONTACT = {
     "first_name": "Alex", "last_name": "Rivera", "full_name": "Alex Rivera", "email": "alex@example.com",
     "company_name": "Rivera Bail Bonds", "city": "Austin", "state": "TX", "website": "https://riverabail.com",
     "job_title": "Owner", "industry": "Bail bonds", "phone": "(512) 555-0100", "custom_intro": "",
+    "recipient_id": "preview",
 }
+# rid on a test email's demo links when the test address isn't a prospect: the website's report for it stays unmatched
+TEST_RECIPIENT = "test"
 
 
 class EnrollIn(BaseModel):
@@ -659,6 +662,11 @@ def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), 
     if not sending.may_test_send(db, mailbox, to):
         raise HTTPException(403, sending.TEST_RECIPIENT_ERROR)
     vars_, campaign, _who = _preview_vars(db, body)
+    # a test visit must never be credited to the campaign's first prospect: it goes to the prospect with the test
+    # address, if there is one (to try Engaged Prospects end to end), and otherwise to no one
+    me = db.scalar(select(Contact.id).where(Contact.email == to, Contact.deleted_at.is_(None)).limit(1))
+    rid = str(me) if me else TEST_RECIPIENT
+    vars_["recipient_id"] = rid
     asset = _chosen_video(db, body)
     if asset is not None and body.video_preview and not asset.link_url:
         raise HTTPException(422, f"The clickable preview needs a video link. Add one to “{asset.filename}”")
@@ -673,6 +681,7 @@ def test_send(body: TestSendIn, request: Request, user: User = Depends(writer), 
                          video=link, **sending.signature_args(mailbox))
     except MissingVariables as exc:
         raise HTTPException(422, str(exc)) from exc
+    r = tracking.add_recipient_id(db, r, rid)
     rfc_id = new_message_id(mailbox.email)
     out = OutgoingMessage(from_email=mailbox.email, from_name=mailbox.display_name, to_email=to,
                           subject=f"[TEST] {r.subject}", text=r.text, html=r.html, rfc_message_id=rfc_id)

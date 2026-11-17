@@ -210,7 +210,7 @@ def with_recipient(url: str, recipient_id: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, f"{query}{RECIPIENT_PARAM}={recipient_id}", parts.fragment))
 
 
-def add_recipient_id(db: Session, rendered: Rendered, contact_id: uuid.UUID) -> Rendered:
+def add_recipient_id(db: Session, rendered: Rendered, contact_id: uuid.UUID | str) -> Rendered:
     """Every demo link (Settings → Tracking → Demo links) in a campaign email carries the prospect's id as ``rid``, so
     trace-studio.tech can report the visit for the right prospect. Runs before click tracking, which then stores
     the link with its rid as the destination. Never stops an email."""

@@ -17,7 +17,7 @@ from app.core.config import get_settings
 from app.models import Contact, CrmActivity, Notification, SentMessage, SiteEvent, SiteVisitor, TrackedLink
 from app.models.base import utcnow
 from app.services import sending, site_tracking, tracking
-from tests.test_sending import make_contacts, outbox, setup_campaign, setup_mailbox  # noqa: F401
+from tests.test_sending import make_contacts, outbox, sent_files, setup_campaign, setup_mailbox  # noqa: F401
 
 SECRET = "test-webhook-secret-0123456789-abcdefghijklmnopqrstuvwxyz"
 URL = "/api/track/site-events"
@@ -134,6 +134,28 @@ def test_campaign_demo_links_carry_the_recipient_id(client, db, outbox, complian
         ("demo", f"https://trace-studio.tech/demos/ellison-reyes?utm_source=email&rid={cid}#tour"),
         ("link", "https://trace-studio.tech/work"),  # not a demo link: untouched
     ]
+
+
+def test_test_emails_never_credit_the_campaigns_first_prospect(client, db, outbox, compliance):  # noqa: F811
+    body = "[Watch](https://trace-studio.tech/demo?rid={{recipient_id}})\n\n[Live](https://trace-studio.tech/demos/ellison-reyes)"
+    mid = setup_mailbox(client, db)
+    (first,) = make_contacts(client, "first@agency.com")
+    camp = setup_campaign(client, mid, [first], start=False)
+
+    def test_send(to):
+        r = client.post("/api/campaigns/test-send", json={"subject": "S", "body": body, "email_account_id": mid,
+                                                          "to_email": to, "campaign_id": camp})
+        assert r.status_code == 200, r.text
+        return sent_files(outbox)[-1].get_body(("html",)).get_content()
+
+    html = test_send("admin@trace.studio")  # not a prospect: the website's report stays unmatched
+    assert first not in html and html.count("rid=test") == 2
+    (me,) = make_contacts(client, "admin@trace.studio")  # the tester as a prospect: shows up in Engaged Prospects
+    html = test_send("admin@trace.studio")
+    assert first not in html and html.count(f"rid={me}") == 2
+    # a campaign with no prospects yet still test-sends (the sample has a recipient_id) and previews
+    p = client.post("/api/campaigns/preview", json={"subject": "S", "body": body}).json()
+    assert p["ok"] and "rid=preview" in p["html"]
 
 
 def test_recipient_id_helpers():

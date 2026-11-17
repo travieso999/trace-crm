@@ -230,8 +230,12 @@ Legend: [x] done & verified · [~] implemented, awaiting external verification �
 - [x] Verified: pytest 106 passed (5 new in tests/test_cron.py), ruff clean; live: health 200 with DB, cron 401 without
       the secret and a full pass with it, /api/docs 404, login → /me → create/delete contact through the web domain,
       Secure + HttpOnly session cookie
-- [ ] Per-minute engine on Hobby: external pinger (cron-job.org) GET https://trace-crm-api.vercel.app/api/cron/engine
-      every minute with header `Authorization: Bearer <CRON_SECRET>`
+- [x] External pinger (cron-job.org) GET https://trace-crm-api.vercel.app/api/cron/engine with header
+      `Authorization: Bearer <CRON_SECRET>`. Pinging every minute 24/7 kept Neon awake nonstop and used the free
+      100 CU-hour month by 2026-11-17. Neon suspends after 5 idle minutes, so ping every 10 min only inside the send
+      window (default Mon-Fri 09:00-17:00 America/New_York; 1 email per mailbox per pass because of the 120 s spacing,
+      so 10 min still covers 30/day) and hourly outside it for reply sync. Widen the window if campaigns use
+      recipient time zones or other hours. The web app pauses polling after 10 min idle (`providers.tsx`)
 - [ ] Google Cloud Console: add redirect URI https://trace-crm-blush.vercel.app/api/email-accounts/oauth/google/callback
 - [ ] API project is deployed by CLI, not Git: connect the repo with Root Directory `apps/api` for push-to-deploy
 - [ ] Limits on Vercel: request bodies max 4.5 MB (CSV/XLSX imports larger than that fail before the 10 MB app cap);

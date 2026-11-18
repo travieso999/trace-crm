@@ -146,6 +146,7 @@ function StepCard({
   index,
   count,
   readOnly,
+  minIndex = 1,
   campaignId,
   variables,
   templates,
@@ -159,6 +160,8 @@ function StepCard({
   index: number;
   count: number;
   readOnly: boolean;
+  /** the earliest position this email can move up to (a completed campaign's sent emails stay first) */
+  minIndex?: number;
   campaignId: string;
   variables: string[];
   templates: Template[];
@@ -198,7 +201,7 @@ function StepCard({
           </Button>
           {!readOnly && (
             <>
-              <Button type="button" variant="ghost" size="icon-sm" disabled={index <= 1} onClick={() => onMove(-1)} aria-label="Move up">
+              <Button type="button" variant="ghost" size="icon-sm" disabled={index <= minIndex} onClick={() => onMove(-1)} aria-label="Move up">
                 <ArrowUp />
               </Button>
               <Button type="button" variant="ghost" size="icon-sm" disabled={first || index === count - 1} onClick={() => onMove(1)} aria-label="Move down">
@@ -364,10 +367,19 @@ function TestSendDialog({ step, campaignId, onOpenChange }: { step: Step | null;
   );
 }
 
-export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign: Campaign; canWrite: boolean; addSignal?: number }) {
+export function SequenceEditor({ campaign, canWrite, addSignal = 0, addOnOpen = false }: {
+  campaign: Campaign; canWrite: boolean; addSignal?: number;
+  /** open with a blank follow-up at the end, ready to write */
+  addOnOpen?: boolean;
+}) {
   const qc = useQueryClient();
-  const readOnly = !canWrite || campaign.status === "completed" || campaign.status === "stopped";
-  const [steps, setSteps] = React.useState<Step[]>(campaign.steps);
+  // a completed campaign can still get follow-ups after its last email; the emails it already sent stay as they are
+  const appendOnly = canWrite && campaign.status === "completed" && !campaign.archived_at;
+  const readOnly = !canWrite || ((campaign.status === "completed" || campaign.status === "stopped") && !appendOnly);
+  const locked = appendOnly ? campaign.steps.length : 0;
+  const [confirmReopen, setConfirmReopen] = React.useState(false);
+  const [steps, setSteps] = React.useState<Step[]>(() =>
+    addOnOpen && !readOnly && campaign.steps.length < 20 ? [...campaign.steps, blankFollowUp()] : campaign.steps);
   const [source, setSource] = React.useState(campaign.steps);
   if (source !== campaign.steps) {
     // server copy changed (saved elsewhere / refetched): adopt it
@@ -412,10 +424,22 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
     onSuccess: (c) => {
       qc.setQueryData(["campaign", campaign.id], c);
       qc.invalidateQueries({ queryKey: ["campaign-preflight", campaign.id] });
-      toast.success("Sequence saved");
+      setConfirmReopen(false);
+      if (appendOnly) {
+        qc.invalidateQueries({ queryKey: ["campaigns"] });
+        qc.invalidateQueries({ queryKey: ["campaign-leads", campaign.id] });
+        qc.invalidateQueries({ queryKey: ["steps-report", campaign.id] });
+        toast.success("Follow-up added. The campaign is active again.");
+      } else {
+        toast.success("Sequence saved");
+      }
     },
-    onError: (e) => toast.error(errorMessage(e)),
+    onError: (e) => {
+      setConfirmReopen(false);
+      toast.error(errorMessage(e));
+    },
   });
+  const awaiting = campaign.stats.awaiting_follow_up ?? 0;
 
   function update(i: number, s: Step) {
     setSteps((all) => all.map((x, j) => (j === i ? s : x)));
@@ -432,13 +456,20 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)]">
       <div className="grid content-start gap-3">
+        {appendOnly && (
+          <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+            This campaign has finished. You can add follow-ups after the last email. They go to the {num(awaiting)} prospect{awaiting === 1 ? "" : "s"} who
+            finished the sequence without replying, unsubscribing or bouncing. The emails already sent can’t be changed.
+          </p>
+        )}
         {steps.map((s, i) => (
           <StepCard
             key={s.id ?? `new-${i}`}
             step={s}
             index={i}
             count={steps.length}
-            readOnly={readOnly}
+            readOnly={readOnly || i < locked}
+            minIndex={Math.max(1, locked)}
             campaignId={campaign.id}
             variables={variables}
             templates={templates.data ?? []}
@@ -459,8 +490,9 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
               <Button type="button" variant="outline" disabled={!dirty || save.isPending} onClick={() => setSteps(campaign.steps)}>
                 Discard
               </Button>
-              <Button type="button" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
-                Save sequence
+              <Button type="button" disabled={!dirty || save.isPending || (appendOnly && steps.length <= locked)}
+                onClick={() => (appendOnly ? setConfirmReopen(true) : save.mutate())}>
+                {appendOnly ? "Save and send follow-up" : "Save sequence"}
               </Button>
             </div>
           </div>
@@ -507,6 +539,15 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0 }: { campaign
           )}
         </CardContent>
       </Card>
+      <ConfirmDialog
+        open={confirmReopen}
+        onOpenChange={setConfirmReopen}
+        title="Reopen this campaign to send the follow-up?"
+        description={`The campaign becomes active again and the new follow-up goes to the ${num(awaiting)} prospect${awaiting === 1 ? "" : "s"} who finished without replying. The wait counts from the last email each one got, so a follow-up that’s already due goes out in the next sending window, within your daily limits. To hold it, set its status to Draft before saving.`}
+        confirmLabel="Save and send"
+        pending={save.isPending}
+        onConfirm={() => save.mutate()}
+      />
       <TestSendDialog step={testStep} campaignId={campaign.id} onOpenChange={(o) => !o && setTestStep(null)} />
       <StepAudienceDialog campaign={campaign} step={recipientsFor?.step ?? null} position={recipientsFor?.position ?? 1} canWrite={canWrite}
         onOpenChange={(o) => !o && setRecipientsFor(null)} />

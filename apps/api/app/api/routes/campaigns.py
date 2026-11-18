@@ -225,11 +225,14 @@ def delete_campaign(campaign_id: uuid.UUID, request: Request, user: User = Depen
 def put_steps(campaign_id: uuid.UUID, body: StepsIn, request: Request, user: User = Depends(writer),
               db: Session = Depends(get_db)):
     c = _get(db, campaign_id)
+    was_completed = c.status == "completed"
     try:
         svc.replace_steps(db, c, [s.model_dump() for s in body.steps])
     except svc.CampaignError as exc:
         raise _campaign_error(exc) from exc
     audit(db, user, "campaign.steps_updated", "campaign", c.id, request, steps=len(body.steps))
+    if was_completed:  # new follow-ups on a finished campaign reopened it
+        audit(db, user, "campaign.reopened", "campaign", c.id, request, steps=len(body.steps))
     db.commit()
     db.refresh(c)
     return _out(db, [c])[0]

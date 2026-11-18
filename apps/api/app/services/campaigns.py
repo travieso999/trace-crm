@@ -16,6 +16,7 @@ from app.models import (
     EmailEvent,
     EmailImage,
     ScheduledMessage,
+    SentMessage,
     SequenceStep,
     SuppressionEntry,
     User,
@@ -26,6 +27,7 @@ from app.providers import send_block_reason
 from app.services import app_settings, video_assets
 from app.services.contacts import log_activity, template_variables
 from app.services.rendering import MissingVariables, render_string, uses_signature
+from app.services.scheduling import add_delay
 
 # enrollment states that still expect emails; paused prospects resume where they left off
 LIVE = ("active", "paused")
@@ -362,11 +364,21 @@ def remove_contact(db: Session, campaign: Campaign, contact_id: uuid.UUID) -> bo
 
 
 def replace_steps(db: Session, campaign: Campaign, steps: list[dict]) -> None:
-    """Replace the sequence. Steps keep their id when supplied so sent history stays linked."""
-    if campaign.status in ("completed", "stopped"):
-        raise CampaignError("Cannot edit the sequence of a finished campaign")
+    """Replace the sequence. Steps keep their id when supplied so sent history stays linked.
+
+    A completed campaign accepts new follow-ups after its last email (its earlier emails stay exactly as sent), and
+    saving them reopens it for the prospects who finished the sequence without replying."""
+    if campaign.status == "stopped":
+        raise CampaignError("Cannot edit the sequence of a stopped campaign")
+    finished = campaign.status == "completed"
     if len(steps) > 20:
         raise CampaignError("A sequence can have at most 20 steps")
+    if finished:
+        if campaign.archived_at:
+            raise CampaignError("Restore the campaign from the archive before adding follow-ups")
+        old_ids = [s.id for s in campaign.steps]
+        if [s.get("id") for s in steps[:len(old_ids)]] != old_ids or len(steps) <= len(old_ids):
+            raise CampaignError("A finished campaign can only get new follow-ups after its last email")
     existing = {s.id: s for s in campaign.steps}
     sent_step_ids = set(db.scalars(select(ScheduledMessage.sequence_step_id).where(
         ScheduledMessage.campaign_id == campaign.id, ScheduledMessage.status.in_(("sent", "sending", "unknown")))))
@@ -375,6 +387,8 @@ def replace_steps(db: Session, campaign: Campaign, steps: list[dict]) -> None:
     if removed_sent:
         raise CampaignError("Steps that already sent messages cannot be deleted (edit them instead)")
     for i, data in enumerate(steps, start=1):
+        if finished and data.get("id") in existing:
+            continue  # sent emails are not changed, so their video is not checked again
         if data.get("video_preview") or data.get("video_attach"):
             asset = db.get(VideoAsset, data["video_asset_id"]) if data.get("video_asset_id") else None
             if asset is None or asset.status != "ready":
@@ -392,6 +406,9 @@ def replace_steps(db: Session, campaign: Campaign, steps: list[dict]) -> None:
             step = SequenceStep(campaign_id=campaign.id)
             db.add(step)
         step.position = i
+        if finished and step.id in existing:
+            new_list.append(step)  # already sent to everyone who got this far: left exactly as it was
+            continue
         step.delay_days = 0 if i == 1 else int(data.get("delay_days", 0))
         step.business_days = bool(data.get("business_days", True))
         step.subject = data.get("subject", "")
@@ -412,6 +429,48 @@ def replace_steps(db: Session, campaign: Campaign, steps: list[dict]) -> None:
             db.delete(s)
     db.flush()
     db.expire(campaign, ["steps"])
+    if finished:
+        reopen_for_follow_ups(db, campaign)
+
+
+def reopen_for_follow_ups(db: Session, campaign: Campaign) -> int:
+    """A completed campaign that just got new follow-ups goes back to active. Prospects who finished the sequence
+    without replying continue with the next email; its wait counts from the last email they got, so a follow-up that
+    is already due goes out in the next sending window. Replied, unsubscribed, bounced, stopped and removed prospects
+    stay where they are, and the sender still checks suppression and replies at sending time."""
+    now = utcnow()
+    last_sent = (select(SentMessage.contact_id, func.max(SentMessage.sent_at).label("at"))
+                 .where(SentMessage.campaign_id == campaign.id, SentMessage.kind == "sequence")
+                 .group_by(SentMessage.contact_id).subquery())
+    rows = db.execute(
+        select(CampaignContact, Contact.timezone, last_sent.c.at)
+        .join(Contact, Contact.id == CampaignContact.contact_id)
+        .outerjoin(last_sent, last_sent.c.contact_id == CampaignContact.contact_id)
+        .where(CampaignContact.campaign_id == campaign.id, CampaignContact.status == "completed",
+               CampaignContact.replied_at.is_(None), Contact.deleted_at.is_(None))
+        .with_for_update(of=CampaignContact)).all()
+    schedule = campaign.schedule or {}
+    steps = {s.position: s for s in campaign.steps}
+    reopened = 0
+    for cc, tz_name, at in rows:
+        nxt = steps.get(cc.current_step + 1)
+        if nxt is None:
+            continue
+        tz = tz_name if schedule.get("use_recipient_timezone") else schedule.get("timezone")
+        due = add_delay(at or now, nxt.delay_days, business_days=nxt.business_days, tz_name=tz,
+                        sending_days=set(schedule.get("days") or []))
+        cc.status, cc.stop_reason, cc.next_send_at = "active", None, max(due, now)
+        reopened += 1
+    if not reopened:
+        raise CampaignError("Nobody is waiting for a follow-up: every prospect replied, unsubscribed, bounced or was "
+                            "stopped")
+    db.flush()
+    # completed -> active happens only here; transition() keeps a finished campaign closed everywhere else
+    campaign.status, campaign.completed_at, campaign.last_error = "active", None, None
+    problems = preflight(db, campaign)
+    if problems:
+        raise CampaignError("The campaign can't send the new follow-ups yet", problems)
+    return reopened
 
 
 def duplicate(db: Session, campaign: Campaign, user: User | None) -> Campaign:
@@ -456,7 +515,8 @@ def relaunch(db: Session, campaign: Campaign, user: User | None) -> tuple[Campai
 
 def stats(db: Session, campaign_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:
     out: dict[uuid.UUID, dict] = {cid: {"leads": 0, "active": 0, "replied": 0, "completed": 0, "bounced": 0,
-                                         "unsubscribed": 0, "sent": 0, "queued": 0, "positive": 0}
+                                         "unsubscribed": 0, "sent": 0, "queued": 0, "positive": 0,
+                                         "awaiting_follow_up": 0}
                                   for cid in campaign_ids}
     if not campaign_ids:
         return out
@@ -486,6 +546,14 @@ def stats(db: Session, campaign_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:
         .group_by(CampaignContact.campaign_id)
     ):
         out[cid]["replied"] = n
+    # finished the sequence without replying: who a follow-up added to a completed campaign would go to
+    for cid, n in db.execute(
+        select(CampaignContact.campaign_id, func.count()).where(
+            CampaignContact.campaign_id.in_(campaign_ids), CampaignContact.status == "completed",
+            CampaignContact.replied_at.is_(None))
+        .group_by(CampaignContact.campaign_id)
+    ):
+        out[cid]["awaiting_follow_up"] = n
     for v in out.values():
         v["reply_rate"] = round(100 * v["replied"] / v["sent"], 1) if v["sent"] else 0.0
     return out

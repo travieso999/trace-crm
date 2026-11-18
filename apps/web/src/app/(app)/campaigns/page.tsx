@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Archive, ArchiveRestore, MoreHorizontal, Pause, Play, Plus, RotateCcw, Send, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, MailPlus, MoreHorizontal, Pause, Play, Plus, RotateCcw, Send, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -29,8 +29,9 @@ const STATUS_FILTERS = [
 
 const ACTION_DONE: Record<string, string> = { pause: "Campaign paused", resume: "Campaign resumed", archive: "Campaign archived", unarchive: "Campaign restored" };
 
-function RowActions({ c, onAction, onRelaunch, onDelete }: {
-  c: Campaign; onAction: (c: Campaign, name: string) => void; onRelaunch: (c: Campaign) => void; onDelete: (c: Campaign) => void;
+function RowActions({ c, onAction, onRelaunch, onAddFollowUp, onDelete }: {
+  c: Campaign; onAction: (c: Campaign, name: string) => void; onRelaunch: (c: Campaign) => void;
+  onAddFollowUp: (c: Campaign) => void; onDelete: (c: Campaign) => void;
 }) {
   const running = c.status === "active" || c.status === "scheduled";
   const finished = c.status === "completed" || c.status === "stopped";
@@ -40,6 +41,11 @@ function RowActions({ c, onAction, onRelaunch, onDelete }: {
         <MoreHorizontal />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {c.status === "completed" && !c.archived_at && (
+          <DropdownMenuItem onClick={() => onAddFollowUp(c)}>
+            <MailPlus /> Add follow-up
+          </DropdownMenuItem>
+        )}
         {finished && (
           <DropdownMenuItem onClick={() => onRelaunch(c)}>
             <RotateCcw /> Relaunch
@@ -216,7 +222,8 @@ function CampaignsList() {
                   <TableCell className="hidden text-muted-foreground lg:table-cell">{relTime(c.created_at)}</TableCell>
                   {canWrite && (
                     <TableCell className="w-10 text-right">
-                      <RowActions c={c} onAction={(x, name) => action.mutate({ c: x, name })} onRelaunch={(x) => relaunch.mutate(x)} onDelete={setDeleting} />
+                      <RowActions c={c} onAction={(x, name) => action.mutate({ c: x, name })} onRelaunch={(x) => relaunch.mutate(x)}
+                        onAddFollowUp={(x) => router.push(`/campaigns/${x.id}?tab=sequence&add=1`)} onDelete={setDeleting} />
                     </TableCell>
                   )}
                 </TableRow>

@@ -245,6 +245,12 @@ function CampaignDetail() {
   const [adding, setAdding] = React.useState<AudienceTab | null>(null);
   const [sending, setSending] = React.useState(false);
   const [addFollowUp, setAddFollowUp] = React.useState(0);
+  // ?add=1 (from the campaigns list's "Add follow-up") opens the sequence with a new follow-up ready to write; the
+  // flag is then dropped from the address so a reload doesn't add another one
+  const addOnOpen = params.get("add") === "1";
+  React.useEffect(() => {
+    if (addOnOpen) router.replace(`/campaigns/${id}?tab=sequence`);
+  }, [addOnOpen, id, router]);
 
   const q = useQuery({
     queryKey: ["campaign", id],
@@ -327,7 +333,7 @@ function CampaignDetail() {
                 <Rocket /> Send email
               </Button>
             )}
-            {!finishedStatus && (
+            {(!finishedStatus || (st === "completed" && !c.archived_at)) && (
               <Button
                 variant="outline"
                 onClick={() => {
@@ -423,7 +429,7 @@ function CampaignDetail() {
           <CampaignContacts campaign={c} canWrite={canWrite} onAdd={setAdding} />
         </TabsContent>
         <TabsContent value="sequence" className="pt-3">
-          <SequenceEditor campaign={c} canWrite={canWrite} addSignal={addFollowUp} />
+          <SequenceEditor campaign={c} canWrite={canWrite} addSignal={addFollowUp} addOnOpen={addOnOpen} />
         </TabsContent>
         <TabsContent value="history" className="pt-3">
           <CampaignHistory campaign={c} canSimulate={isAdmin} />

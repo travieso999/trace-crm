@@ -268,3 +268,49 @@ def test_summary_leaves_out_prospects_missing_merge_data(client, db, outbox):
     # with fallbacks they are sendable again
     client.patch(f"/api/campaigns/{cid}", json={"missing_variable_policy": "fallback", "variable_fallbacks": {"first_name": "there"}})
     assert client.get(f"/api/campaigns/{cid}/recipients-summary").json()["eligible"] == 3
+
+
+def test_follow_up_added_to_a_completed_campaign_goes_to_non_responders(client, db, outbox):
+    cid, mid = list_campaign(client, db, n=3, steps=[STEPS[0]])
+    assert sending.send_due() == {"sent": 3}
+    assert client.get(f"/api/campaigns/{cid}").json()["status"] == "completed"
+    sent0 = db.scalar(select(SentMessage).where(SentMessage.to_email == "owner0@txbail0.com"))
+    client.post(f"/api/email-accounts/{mid}/sandbox/simulate", json={"sent_message_id": str(sent0.id), "body": "Yes!"})
+    c = client.get(f"/api/campaigns/{cid}").json()
+    assert c["stats"]["awaiting_follow_up"] == 2
+
+    # the sent email can't be changed or dropped; nothing new is not a change either
+    first = c["steps"]
+    assert client.put(f"/api/campaigns/{cid}/steps", json={"steps": first}).status_code == 409
+    assert client.put(f"/api/campaigns/{cid}/steps", json={"steps": [STEPS[1]]}).status_code == 409
+    edited = [{**first[0], "subject": "Changed"}, {**STEPS[1], "delay_days": 3}]
+    r = client.put(f"/api/campaigns/{cid}/steps", json={"steps": edited})
+    assert r.status_code == 200, r.text
+    c = r.json()
+    assert c["status"] == "active" and c["completed_at"] is None
+    assert c["steps"][0]["subject"] == first[0]["subject"] and len(c["steps"]) == 2
+
+    # the wait counts from the last email: 3 days after it, not right away
+    assert not sending.send_due().get("sent")
+    waits = db.scalars(select(CampaignContact.next_send_at).where(
+        CampaignContact.campaign_id == cid, CampaignContact.status == "active")).all()
+    assert len(waits) == 2 and all(utcnow() + timedelta(days=2) < w < utcnow() + timedelta(days=4) for w in waits)
+    due_now(db, cid)
+    assert sending.send_due() == {"sent": 2}
+    to = [m["To"] for m in sent_files(outbox)]
+    assert to.count("owner0@txbail0.com") == 1 and to.count("owner1@txbail1.com") == 2
+    assert client.get(f"/api/campaigns/{cid}").json()["status"] == "completed"
+    due_now(db, cid)
+    assert not sending.send_due().get("sent")
+
+
+def test_follow_up_on_a_completed_campaign_needs_someone_to_send_to(client, db, outbox):
+    cid, mid = list_campaign(client, db, n=1, steps=[STEPS[0]])
+    assert sending.send_due() == {"sent": 1}
+    sent0 = db.scalar(select(SentMessage).where(SentMessage.to_email == "owner0@txbail0.com"))
+    client.post(f"/api/email-accounts/{mid}/sandbox/simulate", json={"sent_message_id": str(sent0.id)})
+    first = client.get(f"/api/campaigns/{cid}").json()["steps"]
+    r = client.put(f"/api/campaigns/{cid}/steps", json={"steps": [*first, STEPS[1]]})
+    assert r.status_code == 409 and "Nobody is waiting" in r.text
+    c = client.get(f"/api/campaigns/{cid}").json()
+    assert c["status"] == "completed" and len(c["steps"]) == 1  # nothing was saved

@@ -207,6 +207,8 @@ export type CampaignStats = {
   queued: number;
   positive: number;
   reply_rate: number;
+  /** finished the sequence without replying: who a follow-up added to a completed campaign goes to */
+  awaiting_follow_up?: number;
 };
 
 export type Campaign = {

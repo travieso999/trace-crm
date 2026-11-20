@@ -1,12 +1,14 @@
 """Enrollment dry runs and per-lead personalized previews. Read-only: nothing here sends or enrolls."""
 
 import uuid
+from datetime import timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Campaign, CampaignContact, Contact
-from app.services import sending, video_assets
+from app.models.base import utcnow
+from app.services import cooldown, sending, video_assets
 from app.services.contacts import suppressed_set
 from app.services.rendering import MissingVariables, render_email, render_string
 
@@ -34,6 +36,10 @@ def report(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID]) -> lis
     enrolled = set(db.scalars(select(CampaignContact.contact_id).where(
         CampaignContact.campaign_id == campaign.id, CampaignContact.contact_id.in_(ids))))
     suppressed = suppressed_set(db, [c.email for c in contacts.values()])
+    # not a skip reason: these prospects are added, and their emails wait out the campaign's cooldown
+    days = campaign.cross_campaign_cooldown_days
+    recent = cooldown.recent_other_sends(db, campaign.id, list(contacts), utcnow() - timedelta(days=days)) if days else {}
+    others = cooldown.other_running_campaigns(db, campaign.id, list(contacts))
     out = []
     for cid in ids:
         c = contacts.get(cid)
@@ -53,17 +59,27 @@ def report(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID]) -> lis
         else:
             missing = missing_variables(db, campaign, c)
             status = "missing_fields" if missing else "ready"
+        note = None
+        if status in ("ready", "missing_fields"):
+            if send := recent.get(cid):
+                note = {"kind": "recently_contacted", "until": send.until(days).isoformat(),
+                        "message": f"{cooldown.describe(send, capital=True)}: waits until {send.until(days):%b} {send.until(days).day}"}
+            elif cid in others:
+                note = {"kind": "in_other_campaign", "until": None,
+                        "message": f"Also in “{others[cid]}”" + (f": emails stay {days} days apart" if days else "")}
         merge = sending.contact_variables(db, c)
         out.append({"contact_id": str(c.id), "email": c.email, "first_name": c.first_name, "last_name": c.last_name,
                     "company_name": merge.get("company_name") or None, "lead_status": c.lead_status,
-                    "status": status, "missing": missing})
+                    "status": status, "missing": missing, "cooldown": note})
     return out
 
 
 def summarize(rows: list[dict]) -> dict:
-    counts = dict.fromkeys(STATUSES, 0)
+    counts = dict.fromkeys(STATUSES, 0) | {"recently_contacted": 0, "in_other_campaign": 0}
     for r in rows:
         counts[r["status"]] += 1
+        if r.get("cooldown") and r["status"] == "ready":
+            counts[r["cooldown"]["kind"]] += 1
     return counts
 
 

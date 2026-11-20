@@ -138,7 +138,7 @@ export function EnrollDialog({ contactIds, open, onOpenChange, onDone }: { conta
   });
 
   const leads = dry.data?.leads ?? [];
-  const shown = filter === "all" ? leads : leads.filter((l) => l.status !== "ready");
+  const shown = filter === "all" ? leads : leads.filter((l) => l.status !== "ready" || l.cooldown);
   const ready = dry.data?.summary.ready ?? 0;
 
   return (
@@ -208,10 +208,21 @@ export function EnrollDialog({ contactIds, open, onOpenChange, onDone }: { conta
                     {dry.data.summary.not_found ? `, ${num(dry.data.summary.not_found)} not found` : ""}.
                   </p>
                 )}
+                {(dry.data.summary.recently_contacted > 0 || dry.data.summary.in_other_campaign > 0) && (
+                  <p className="rounded-md bg-sky-500/10 px-2 py-1.5 text-sm text-sky-900 dark:text-sky-200" role="status">
+                    {dry.data.summary.recently_contacted > 0 &&
+                      `${num(dry.data.summary.recently_contacted)} ready prospect${dry.data.summary.recently_contacted === 1 ? " was" : "s were"} emailed recently by another campaign. `}
+                    {dry.data.summary.in_other_campaign > 0 &&
+                      `${num(dry.data.summary.in_other_campaign)} ${dry.data.summary.in_other_campaign === 1 ? "is" : "are"} also in another running campaign. `}
+                    {(campaign?.cross_campaign_cooldown_days ?? 0) > 0
+                      ? `They’re still added; their emails wait so campaigns stay ${campaign!.cross_campaign_cooldown_days} days apart.`
+                      : "This campaign’s gap between campaigns is off, so they may get two emails close together."}
+                  </p>
+                )}
                 <div className="flex items-center justify-between gap-2">
                   <NativeSelect aria-label="Show" value={filter} onChange={(e) => setFilter(e.target.value as "all" | "attention")}>
                     <option value="all">All prospects</option>
-                    <option value="attention">Only skipped / needs attention</option>
+                    <option value="attention">Only skipped / needs attention / in other campaigns</option>
                   </NativeSelect>
                   <span className="text-xs text-muted-foreground">Preview shows the exact personalized emails.</span>
                 </div>
@@ -240,6 +251,7 @@ export function EnrollDialog({ contactIds, open, onOpenChange, onDone }: { conta
                             {l.missing.length > 0 && (
                               <div className="mt-0.5 font-mono text-[11px] text-muted-foreground">{l.missing.map((m) => `{{${m}}}`).join(" ")}</div>
                             )}
+                            {l.cooldown && <div className="mt-0.5 text-xs text-sky-800 dark:text-sky-300">{l.cooldown.message}</div>}
                           </TableCell>
                           <TableCell>
                             {l.email && (

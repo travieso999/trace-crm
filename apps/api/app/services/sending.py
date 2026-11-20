@@ -45,7 +45,7 @@ from app.providers.base import (
     SendResult,
 )
 from app.providers.mime import new_message_id
-from app.services import app_settings, mailbox_alerts, tracking, video_assets
+from app.services import app_settings, cooldown, mailbox_alerts, tracking, video_assets
 from app.services import campaigns as campaign_service
 from app.services.contacts import is_suppressed, log_activity, set_lead_status, template_variables
 from app.services.rendering import MissingVariables, Rendered, render_email, render_string, signature_to_text, uses_signature
@@ -325,8 +325,17 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
             return cancel("suppressed", "unsubscribed")
         if contact.verification_status == "invalid":
             return cancel("invalid email", "stopped")
+        if days := campaign.cross_campaign_cooldown_days:
+            # held until this reservation commits, so another campaign's reservation for the same prospect waits
+            # and then sees this one as in flight
+            cooldown.lock_contact(db, contact.id)
+            if cooldown.other_send_in_flight(db, campaign.id, contact.id):
+                return defer(now + cooldown.IN_FLIGHT_RECHECK, "cooldown: another campaign is emailing this prospect")
+            recent = cooldown.recent_other_sends(db, campaign.id, [contact.id], now - timedelta(days=days)).get(contact.id)
+            if recent:
+                return defer(recent.until(days), f"cooldown: {cooldown.describe(recent)}")
 
-        mailbox = db.scalar(select(EmailAccount).where(EmailAccount.id == sm.email_account_id).with_for_update())
+        mailbox =db.scalar(select(EmailAccount).where(EmailAccount.id == sm.email_account_id).with_for_update())
         if cc.current_step == 0:
             # nothing sent yet, so the lead can move to another mailbox: one that works if this one doesn't, or one
             # with room left today if this one has hit its daily limit (otherwise the lead would wait for tomorrow

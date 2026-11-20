@@ -165,6 +165,7 @@ type SettingsDraft = {
   missing_variable_policy: "block" | "fallback";
   fallbacks: string;
   stop_on_auto_reply: boolean;
+  cooldown_days: number;
   start_at: string;
   campaign_type: string;
   target_location: string;
@@ -181,6 +182,7 @@ function toDraft(c: Campaign): SettingsDraft {
     missing_variable_policy: c.missing_variable_policy,
     fallbacks: Object.entries(c.variable_fallbacks ?? {}).map(([k, v]) => `${k}=${v}`).join("\n"),
     stop_on_auto_reply: c.stop_on_auto_reply,
+    cooldown_days: c.cross_campaign_cooldown_days,
     // datetime-local wants local time without zone
     start_at: c.start_at ? new Date(new Date(c.start_at).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : "",
     campaign_type: c.campaign_type ?? "",
@@ -219,6 +221,7 @@ export function CampaignSettings({ campaign, canWrite }: { campaign: Campaign; c
           missing_variable_policy: draft.missing_variable_policy,
           variable_fallbacks: fallbacks,
           stop_on_auto_reply: draft.stop_on_auto_reply,
+          cross_campaign_cooldown_days: draft.cooldown_days,
           start_at: draft.start_at ? new Date(draft.start_at).toISOString() : null,
           campaign_type: draft.campaign_type,
           target_location: draft.target_location,
@@ -331,6 +334,18 @@ export function CampaignSettings({ campaign, canWrite }: { campaign: Campaign; c
                   onChange={(e) => setDraft({ ...draft, fallbacks: e.target.value })} />
               </Field>
             )}
+            <Field
+              label="Gap after another campaign’s email (days)"
+              htmlFor="cs-cooldown"
+              hint={
+                draft.cooldown_days > 0
+                  ? `If another campaign emailed a prospect in the last ${draft.cooldown_days} day${draft.cooldown_days === 1 ? "" : "s"}, this campaign’s email waits until the gap has passed. Nobody is skipped.`
+                  : "Off: a prospect on two lists can get emails from both campaigns on the same day."
+              }
+            >
+              <Input id="cs-cooldown" type="number" min={0} max={365} className="w-28" disabled={readOnly} value={draft.cooldown_days}
+                onChange={(e) => setDraft({ ...draft, cooldown_days: Math.max(0, Math.min(365, Math.floor(Number(e.target.value) || 0))) })} />
+            </Field>
             <label className="flex items-start gap-2 text-sm">
               <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" disabled={readOnly} checked={draft.stop_on_auto_reply}
                 onChange={(e) => setDraft({ ...draft, stop_on_auto_reply: e.target.checked })} />

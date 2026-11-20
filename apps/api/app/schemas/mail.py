@@ -129,6 +129,7 @@ class CampaignIn(BaseModel):
     variable_fallbacks: dict[str, str] | None = None
     require_approved_personalization: bool | None = None
     stop_on_auto_reply: bool | None = None
+    cross_campaign_cooldown_days: int | None = Field(default=None, ge=0, le=365)
     start_at: datetime | None = None
     mailbox_ids: list[uuid.UUID] | None = None
     campaign_type: str | None = Field(default=None, max_length=60)
@@ -153,6 +154,7 @@ class CampaignOut(ORMModel):
     variable_fallbacks: dict
     require_approved_personalization: bool
     stop_on_auto_reply: bool
+    cross_campaign_cooldown_days: int = 14
     start_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None

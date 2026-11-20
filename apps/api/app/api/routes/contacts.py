@@ -12,7 +12,17 @@ from app.api.deps import audit, reader, require_perm, writer
 from app.core import ratelimit
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.models import Campaign, CampaignContact, Contact, CrmActivity, Tag, User
+from app.models import (
+    Campaign,
+    CampaignContact,
+    Contact,
+    CrmActivity,
+    ScheduledMessage,
+    SentMessage,
+    SequenceStep,
+    Tag,
+    User,
+)
 from app.models.base import utcnow
 from app.schemas.common import BulkResult, Message, Page
 from app.schemas.contacts import (
@@ -26,7 +36,7 @@ from app.schemas.contacts import (
     CsvPreviewOut,
     TagOut,
 )
-from app.services import audience, import_lists, security_alerts
+from app.services import audience, cooldown, import_lists, security_alerts
 from app.services import campaigns as campaign_service
 from app.services import notes as note_service
 from app.services.audience import AudienceFilter, contacts_query
@@ -268,6 +278,53 @@ def contact_activities(contact_id: uuid.UUID, _: User = Depends(reader), db: Ses
     return list(
         db.scalars(select(CrmActivity).where(CrmActivity.contact_id == contact_id).order_by(CrmActivity.created_at.desc()).limit(200))
     )
+
+
+@router.get("/{contact_id}/outreach")
+def contact_outreach(contact_id: uuid.UUID, _: User = Depends(reader), db: Session = Depends(get_db)):
+    """Every campaign this prospect is in and every email they were sent, newest first. An email that went out soon
+    after another campaign's email is flagged (``gap_days`` / ``too_close``), so overlapping lists are easy to spot."""
+    contact = db.get(Contact, contact_id)
+    if not contact or contact.deleted_at:
+        raise HTTPException(404, "Contact not found")
+    steps = (select(SequenceStep.campaign_id, func.count().label("n")).group_by(SequenceStep.campaign_id)
+             .subquery())
+    campaigns = [
+        {"campaign_id": str(cc.campaign_id), "name": camp.name, "campaign_status": camp.status, "status": cc.status,
+         "emails_sent": cc.current_step, "total_steps": n or 0, "added_at": cc.created_at,
+         "next_send_at": cc.next_send_at if cc.status == "active" else None, "stop_reason": cc.stop_reason,
+         "replied_at": cc.replied_at, "cooldown_days": camp.cross_campaign_cooldown_days}
+        for cc, camp, n in db.execute(
+            select(CampaignContact, Campaign, steps.c.n)
+            .join(Campaign, Campaign.id == CampaignContact.campaign_id)
+            .outerjoin(steps, steps.c.campaign_id == Campaign.id)
+            .where(CampaignContact.contact_id == contact_id, Campaign.deleted_at.is_(None))
+            .order_by(CampaignContact.created_at.desc()))
+    ]
+    rows = db.execute(
+        select(SentMessage, Campaign.name, Campaign.cross_campaign_cooldown_days, SequenceStep.position)
+        .outerjoin(Campaign, Campaign.id == SentMessage.campaign_id)
+        .outerjoin(ScheduledMessage, ScheduledMessage.id == SentMessage.scheduled_message_id)
+        .outerjoin(SequenceStep, SequenceStep.id == ScheduledMessage.sequence_step_id)
+        .where(SentMessage.contact_id == contact_id, SentMessage.kind != "test")
+        .order_by(SentMessage.sent_at).limit(500)
+    ).all()
+    emails = []
+    for i, (m, name, days, position) in enumerate(rows):
+        gap, other = None, None
+        if m.kind == "sequence":
+            prev = next((p for p in reversed(rows[:i])
+                         if p[0].kind == "sequence" and p[0].campaign_id != m.campaign_id), None)
+            if prev:
+                gap, other = (m.sent_at - prev[0].sent_at).total_seconds() / 86400, prev[1]
+        emails.append({
+            "id": str(m.id), "sent_at": m.sent_at, "kind": m.kind, "subject": m.subject, "from_email": m.from_email,
+            "campaign_id": str(m.campaign_id) if m.campaign_id else None, "campaign_name": name, "step": position,
+            "gap_days": round(gap, 1) if gap is not None else None, "previous_campaign_name": other,
+            # with the cooldown off, still flag what it would have caught
+            "too_close": gap is not None and gap < (days or cooldown.DEFAULT_DAYS),
+        })
+    return {"campaigns": campaigns, "emails": emails[::-1]}
 
 
 @router.post("/{contact_id}/notes", response_model=ActivityOut, status_code=201)

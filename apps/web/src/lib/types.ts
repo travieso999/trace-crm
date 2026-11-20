@@ -222,6 +222,8 @@ export type Campaign = {
   variable_fallbacks: Record<string, string>;
   require_approved_personalization: boolean;
   stop_on_auto_reply: boolean;
+  /** this campaign's emails wait this many days after another campaign emailed the prospect (0 = off) */
+  cross_campaign_cooldown_days: number;
   start_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -286,6 +288,11 @@ export type RecipientSummary = {
   missing_data: number;
   missing_variables: Record<string, number>;
   eligible: number;
+  cooldown_days: number;
+  /** eligible, but another campaign emailed them within the cooldown (the last 14 days when it is off): they wait */
+  recently_contacted: number;
+  /** eligible, and still waiting in another running campaign (not counted in recently_contacted) */
+  in_other_campaigns: number;
 };
 
 export type StepAudience = {
@@ -728,11 +735,13 @@ export type EnrollReportRow = {
   lead_status?: LeadStatus;
   status: EnrollStatus;
   missing: string[];
+  /** not a skip reason: added, but another campaign got there first (or will), so emails are spaced out */
+  cooldown?: { kind: "recently_contacted" | "in_other_campaign"; until: string | null; message: string } | null;
 };
 
 export type EnrollDryRun = {
   dry_run: true;
-  summary: Record<EnrollStatus, number>;
+  summary: Record<EnrollStatus | "recently_contacted" | "in_other_campaign", number>;
   leads: EnrollReportRow[];
   campaign_status: Campaign["status"];
 };
@@ -830,4 +839,35 @@ export type RawTrackingEvent = {
 
 export type EngagementTimeline = {
   items: TimelineItem[]; level: EngagementLevel | null; visits: SiteVisit[]; raw?: RawTrackingEvent[];
+};
+
+export type ContactOutreach = {
+  campaigns: {
+    campaign_id: string;
+    name: string;
+    campaign_status: Campaign["status"];
+    status: string;
+    emails_sent: number;
+    total_steps: number;
+    added_at: string;
+    next_send_at: string | null;
+    stop_reason: string | null;
+    replied_at: string | null;
+    cooldown_days: number;
+  }[];
+  /** newest first */
+  emails: {
+    id: string;
+    sent_at: string;
+    kind: "sequence" | "manual_reply";
+    subject: string;
+    from_email: string;
+    campaign_id: string | null;
+    campaign_name: string | null;
+    step: number | null;
+    /** days since the previous email from a different campaign */
+    gap_days: number | null;
+    previous_campaign_name: string | null;
+    too_close: boolean;
+  }[];
 };

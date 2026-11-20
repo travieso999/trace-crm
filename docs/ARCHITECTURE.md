@@ -73,8 +73,12 @@ The worker *containers* are still separate services built from the same image.
    (`FOR UPDATE SKIP LOCKED`), inserts a `scheduled_messages` row (`ON CONFLICT DO NOTHING`), enqueues `send_message`.
 2. **`send_message(id)`**, phase 1 (reservation transaction):
    lock scheduled message → lock campaign-contact → re-check campaign status, contact eligibility,
-   global suppression, reply status, mailbox status/circuit breaker, sending window, mailbox + campaign
-   daily limits, minimum spacing → render template (blocks on unresolved variables) → status `sending`, commit.
+   global suppression, reply status, **cross-campaign cooldown**, mailbox status/circuit breaker, sending window,
+   mailbox + campaign daily limits, minimum spacing → render template (blocks on unresolved variables) → status
+   `sending`, commit. The cooldown (`campaigns.cross_campaign_cooldown_days`, default 14, 0 = off) defers the
+   message until N days after another campaign's last sequence email to the prospect; it runs under a per-prospect
+   advisory lock (`pg_advisory_xact_lock`), so two campaigns reserving the same prospect at once see each other
+   (the second finds the first `sending` and re-checks in 15 minutes).
 3. Phase 2: just-in-time thread check (follow-ups only) → provider `send`.
 4. Phase 3 (result transaction): success → `sent_messages` row, email event, advance step & compute
    next `next_send_at` (business days, recipient time zone, window). Temporary error → exponential backoff,

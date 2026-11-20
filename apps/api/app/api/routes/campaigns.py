@@ -122,8 +122,8 @@ def _campaign_error(exc: svc.CampaignError) -> HTTPException:
 
 def _apply(db: Session, c: Campaign, data: dict) -> None:
     for f in ("name", "description", "daily_limit", "missing_variable_policy", "variable_fallbacks",
-              "require_approved_personalization", "stop_on_auto_reply", "start_at", "campaign_type",
-              "target_location", "industry"):
+              "require_approved_personalization", "stop_on_auto_reply", "cross_campaign_cooldown_days", "start_at",
+              "campaign_type", "target_location", "industry"):
         if f in data:
             setattr(c, f, data[f].strip() or None if isinstance(data[f], str) and f != "name" else data[f])
     if "audience_filter" in data and data["audience_filter"] is not None:

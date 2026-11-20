@@ -120,6 +120,32 @@ export function SendConfirmDialog({ campaign, open, onOpenChange, onConfirm, pen
                 <button type="button" className="underline" onClick={() => onFix("settings")}>in Settings</button>.
               </p>
             )}
+            {(s!.recently_contacted > 0 || s!.in_other_campaigns > 0) && (
+              <div className="rounded-md bg-sky-500/10 px-3 py-2 text-sky-900 dark:text-sky-200" role="status">
+                {s!.cooldown_days > 0 ? (
+                  <>
+                    {s!.recently_contacted > 0 && (
+                      <p>
+                        {num(s!.recently_contacted)} of these {s!.recently_contacted === 1 ? "was" : "were"} emailed by another campaign in the last{" "}
+                        {s!.cooldown_days} days. They’ll get this email once the {s!.cooldown_days}-day gap has passed.
+                      </p>
+                    )}
+                    {s!.in_other_campaigns > 0 && (
+                      <p>
+                        {num(s!.in_other_campaigns)} {s!.recently_contacted > 0 ? "more are" : s!.in_other_campaigns === 1 ? "is" : "are"} also in another running
+                        campaign. Their emails will go out at least {s!.cooldown_days} days apart.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p>
+                    {num(s!.recently_contacted + s!.in_other_campaigns)} of these {s!.recently_contacted > 0 ? "were emailed by, or are in," : "are in"} another
+                    campaign, and the gap between campaigns is off, so they may get two emails close together.{" "}
+                    <button type="button" className="underline" onClick={() => onFix("settings")}>Turn it on</button>
+                  </p>
+                )}
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">Tip: send yourself a test from the Email Sequence tab (Preview → Test) first.</p>
             <label className="flex items-start gap-2">
               <input type="checkbox" className="mt-0.5 size-4 accent-[var(--primary)]" checked={ack} onChange={(e) => setAck(e.target.checked)} />

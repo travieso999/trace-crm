@@ -2,7 +2,7 @@
 
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
@@ -24,7 +24,7 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.providers import send_block_reason
-from app.services import app_settings, video_assets
+from app.services import app_settings, cooldown, video_assets
 from app.services.contacts import log_activity, template_variables
 from app.services.rendering import MissingVariables, render_string, uses_signature
 from app.services.scheduling import add_delay
@@ -484,6 +484,7 @@ def duplicate(db: Session, campaign: Campaign, user: User | None) -> Campaign:
         variable_fallbacks=dict(campaign.variable_fallbacks or {}),
         require_approved_personalization=campaign.require_approved_personalization,
         stop_on_auto_reply=campaign.stop_on_auto_reply,
+        cross_campaign_cooldown_days=campaign.cross_campaign_cooldown_days,
         campaign_type=campaign.campaign_type, target_location=campaign.target_location, industry=campaign.industry,
         created_by=user.id if user else None,
     )
@@ -683,7 +684,9 @@ def recipient_summary(db: Session, campaign: Campaign) -> dict:
     seen: set[str] = set()
     out = {"total": len(rows), "valid_emails": 0, "invalid_emails": 0, "duplicate_addresses": 0,
            "unsubscribed": 0, "suppressed": 0, "replied": 0, "paused": 0, "finished_or_stopped": 0,
-           "missing_data": 0, "missing_variables": {}, "eligible": 0}
+           "missing_data": 0, "missing_variables": {}, "eligible": 0,
+           "cooldown_days": campaign.cross_campaign_cooldown_days, "recently_contacted": 0, "in_other_campaigns": 0}
+    eligible_ids: list[uuid.UUID] = []
     for r in rows:
         email = r.email.lower()
         dup = email in seen
@@ -714,6 +717,14 @@ def recipient_summary(db: Session, campaign: Campaign) -> dict:
                     out["missing_variables"][name] = out["missing_variables"].get(name, 0) + 1
             else:
                 out["eligible"] += 1
+                eligible_ids.append(r.Contact.id)
+    # Eligible people another campaign gets to first: still sent, but they wait out the cooldown. With the cooldown
+    # off, "recently" means the last 14 days, so the dialog can say what turning it off would allow.
+    days = campaign.cross_campaign_cooldown_days or cooldown.DEFAULT_DAYS
+    recent = cooldown.recent_other_sends(db, campaign.id, eligible_ids, utcnow() - timedelta(days=days))
+    out["recently_contacted"] = len(recent)
+    others = cooldown.other_running_campaigns(db, campaign.id, eligible_ids)
+    out["in_other_campaigns"] = len(set(others) - set(recent))
     return out
 
 

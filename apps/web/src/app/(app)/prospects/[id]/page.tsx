@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, ShieldBan, Trash2 } from "lucide-react";
+import { ArrowLeft, CircleAlert, ShieldBan, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,8 +15,100 @@ import { LeadForm, toPayload, type LeadValues } from "@/components/lead-form";
 import { useCanWrite } from "@/components/app-shell";
 import { EngagementTimelineView } from "@/components/engagement";
 import { api, errorMessage } from "@/lib/api";
-import { dateTime, fullName, humanize, relTime } from "@/lib/format";
-import type { Activity, Contact } from "@/lib/types";
+import { dateTime, fullName, humanize, num, relTime, shortDate } from "@/lib/format";
+import type { Activity, Contact, ContactOutreach } from "@/lib/types";
+
+/** Every campaign the prospect is in and every email they were sent, with emails sent close to another campaign's
+ * email flagged: the place to check before adding them to yet another list. */
+function OutreachHistory({ contactId }: { contactId: string }) {
+  const q = useQuery({
+    queryKey: ["contact-outreach", contactId],
+    queryFn: () => api<ContactOutreach>(`/api/contacts/${contactId}/outreach`),
+  });
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Outreach history</CardTitle>
+      </CardHeader>
+      <CardContent className="grid gap-5 text-sm">
+        {q.isPending ? (
+          <Skeleton className="h-24" />
+        ) : q.isError ? (
+          <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        ) : (
+          <>
+            <section className="grid gap-2">
+              <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Campaigns ({num(q.data.campaigns.length)})</h3>
+              {q.data.campaigns.length === 0 ? (
+                <p className="text-muted-foreground">Not in any campaign.</p>
+              ) : (
+                <ul className="grid gap-2">
+                  {q.data.campaigns.map((cp) => (
+                    <li key={cp.campaign_id} className="grid gap-0.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <Link href={`/campaigns/${cp.campaign_id}`} className="min-w-0 truncate font-medium hover:underline">
+                          {cp.name}
+                        </Link>
+                        <StatusBadge status={cp.status} />
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {num(cp.emails_sent)} of {num(cp.total_steps)} email{cp.total_steps === 1 ? "" : "s"} sent · added {shortDate(cp.added_at)}
+                        {cp.next_send_at
+                          ? ` · next email ${dateTime(cp.next_send_at)}`
+                          : cp.stop_reason
+                            ? ` · ${humanize(cp.stop_reason)}`
+                            : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+            <section className="grid gap-2">
+              <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Emails sent ({num(q.data.emails.length)})</h3>
+              {q.data.emails.length === 0 ? (
+                <p className="text-muted-foreground">No emails sent yet.</p>
+              ) : (
+                <ol className="grid gap-3 border-l pl-4">
+                  {q.data.emails.map((m) => (
+                    <li key={m.id} className="relative">
+                      <span
+                        className={`absolute -left-[21px] top-1.5 size-2 rounded-full ring-4 ring-card ${m.too_close ? "bg-amber-500" : "bg-border"}`}
+                        aria-hidden
+                      />
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+                        <span className="min-w-0 truncate font-medium">{m.subject || "(no subject)"}</span>
+                        <time dateTime={m.sent_at} className="text-xs text-muted-foreground">
+                          {dateTime(m.sent_at)}
+                        </time>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {[
+                          m.campaign_name ?? (m.campaign_id ? "Deleted campaign" : null),
+                          m.kind === "manual_reply" ? "Reply" : m.step ? `Email ${m.step}` : null,
+                          `from ${m.from_email}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                      {m.too_close && m.gap_days !== null && (
+                        <p className="mt-0.5 flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">
+                          <CircleAlert className="size-3.5 shrink-0" aria-hidden />
+                          {m.gap_days < 1 ? "Same day as" : `${m.gap_days} day${m.gap_days === 1 ? "" : "s"} after`} an email from “
+                          {m.previous_campaign_name ?? "another campaign"}”
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function Timeline({ contactId, canWrite }: { contactId: string; canWrite: boolean }) {
   const qc = useQueryClient();
@@ -142,15 +234,18 @@ export default function LeadDetailPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_22rem]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Details</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {/* keyed on updated_at so the form resets to the saved server values */}
-            <LeadForm key={c.updated_at} contact={c} submitLabel="Save changes" onSubmit={save} disabled={!canWrite} />
-          </CardContent>
-        </Card>
+        <div className="grid min-w-0 content-start gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Details</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {/* keyed on updated_at so the form resets to the saved server values */}
+              <LeadForm key={c.updated_at} contact={c} submitLabel="Save changes" onSubmit={save} disabled={!canWrite} />
+            </CardContent>
+          </Card>
+          <OutreachHistory contactId={c.id} />
+        </div>
 
         <div className="grid content-start gap-4">
           <Card size="sm">
@@ -171,25 +266,6 @@ export default function LeadDetailPage() {
               <Row label="Created">{dateTime(c.created_at)}</Row>
             </CardContent>
           </Card>
-          {c.campaigns.length > 0 && (
-            <Card size="sm">
-              <CardHeader>
-                <CardTitle>Campaigns</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="grid gap-1.5 text-sm">
-                  {c.campaigns.map((cp) => (
-                    <li key={cp.id} className="flex items-center justify-between gap-2">
-                      <Link href={`/campaigns/${cp.id}`} className="truncate hover:underline">
-                        {cp.name}
-                      </Link>
-                      <StatusBadge status={cp.status} />
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
           <Card>
             <CardHeader>
               <CardTitle>Email &amp; demo engagement</CardTitle>

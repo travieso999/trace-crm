@@ -126,6 +126,9 @@ class Campaign(UUIDPk, Timestamps, SoftDelete, Base):
     variable_fallbacks: Mapped[dict] = mapped_column(JSONB, default=dict)
     require_approved_personalization: Mapped[bool] = mapped_column(Boolean, default=False)
     stop_on_auto_reply: Mapped[bool] = mapped_column(Boolean, default=False)
+    # an email from this campaign waits until this many days have passed since another campaign emailed the
+    # prospect (0 = off), so overlapping lists never send one person two cold emails on the same day
+    cross_campaign_cooldown_days: Mapped[int] = mapped_column(Integer, default=14, server_default="14")
     start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -326,7 +329,10 @@ class Conversation(UUIDPk, Timestamps, Base):
 
 class SentMessage(UUIDPk, Base):
     __tablename__ = "sent_messages"
-    __table_args__ = (Index("ix_sent_messages_account_sent", "email_account_id", "sent_at"),)
+    __table_args__ = (
+        Index("ix_sent_messages_account_sent", "email_account_id", "sent_at"),
+        Index("ix_sent_messages_contact_sent", "contact_id", "sent_at"),  # the cross-campaign cooldown check
+    )
 
     scheduled_message_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("scheduled_messages.id", ondelete="SET NULL"), unique=True

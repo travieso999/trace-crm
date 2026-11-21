@@ -177,7 +177,8 @@ function StepCard({
   // worked out from the text, so it's still right after a reload, and clears once the email is edited away from the template
   const usedTemplate = templates.find((t) => t.body.trim() === step.body.trim() && (!showSubject || t.subject.trim() === step.subject.trim()));
   return (
-    <Card>
+    // working in an email (typing, ticking a box) shows it in the preview
+    <Card onFocusCapture={onPreview}>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
         <CardTitle className="text-sm">
           {stepLabel(index + 1, step.name)}
@@ -380,6 +381,8 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0, addOnOpen = 
   const [confirmReopen, setConfirmReopen] = React.useState(false);
   const [steps, setSteps] = React.useState<Step[]>(() =>
     addOnOpen && !readOnly && campaign.steps.length < 20 ? [...campaign.steps, blankFollowUp()] : campaign.steps);
+  // opened to write a new follow-up: preview that one
+  const [previewIdx, setPreviewIdx] = React.useState(() => (addOnOpen ? steps.length - 1 : 0));
   const [source, setSource] = React.useState(campaign.steps);
   if (source !== campaign.steps) {
     // server copy changed (saved elsewhere / refetched): adopt it
@@ -391,20 +394,25 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0, addOnOpen = 
   const [seenSignal, setSeenSignal] = React.useState(addSignal);
   if (addSignal !== seenSignal) {
     setSeenSignal(addSignal);
-    if (!readOnly && steps.length < 20) setSteps((all) => [...all, blankFollowUp()]);
+    if (!readOnly && steps.length < 20) {
+      setSteps((all) => [...all, blankFollowUp()]);
+      setPreviewIdx(steps.length);
+    }
   }
   const [recipientsFor, setRecipientsFor] = React.useState<{ step: Step; position: number } | null>(null);
   const vars = useQuery({ queryKey: ["template-variables"], queryFn: () => api<{ standard: string[]; custom: string[] }>("/api/campaigns/variables") });
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => api<Template[]>("/api/templates") });
-  const [previewIdx, setPreviewIdx] = React.useState(0);
   const [testStep, setTestStep] = React.useState<Step | null>(null);
 
-  const previewStep = steps[Math.min(previewIdx, steps.length - 1)];
+  const shownIdx = Math.max(0, Math.min(previewIdx, steps.length - 1));
+  const previewStep = steps[shownIdx];
+  // a follow-up replying in the thread goes out as "Re: " + the first email's subject
+  const previewSubject = previewStep ? (shownIdx > 0 && previewStep.reply_in_thread ? "Re: " + (steps[0]?.subject ?? "") : previewStep.subject) : "";
   const preview = useQuery({
-    queryKey: ["preview", campaign.id, previewStep?.subject, previewStep?.body, previewIdx, previewStep?.video_asset_id, previewStep?.video_preview, previewStep?.video_attach, previewStep?.video_thumbnail_id, previewStep?.video_cta_text],
+    queryKey: ["preview", campaign.id, previewSubject, previewStep?.body, shownIdx, previewStep?.video_asset_id, previewStep?.video_preview, previewStep?.video_attach, previewStep?.video_thumbnail_id, previewStep?.video_cta_text],
     queryFn: () =>
       api<PreviewResult>("/api/campaigns/preview", {
-        body: { subject: previewIdx > 0 && previewStep.reply_in_thread ? "Re: " + (steps[0]?.subject ?? "") : previewStep.subject, body: previewStep.body, campaign_id: campaign.id, video_asset_id: previewStep.video_asset_id ?? null, video_preview: !!previewStep.video_preview, video_attach: !!previewStep.video_attach, video_thumbnail_id: previewStep.video_thumbnail_id ?? null, video_cta_text: previewStep.video_cta_text ?? null },
+        body: { subject: previewSubject, body: previewStep.body, campaign_id: campaign.id, video_asset_id: previewStep.video_asset_id ?? null, video_preview: !!previewStep.video_preview, video_attach: !!previewStep.video_attach, video_thumbnail_id: previewStep.video_thumbnail_id ?? null, video_cta_text: previewStep.video_cta_text ?? null },
       }),
     enabled: !!previewStep && !!previewStep.body.trim(),
   });
@@ -443,6 +451,11 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0, addOnOpen = 
 
   function update(i: number, s: Step) {
     setSteps((all) => all.map((x, j) => (j === i ? s : x)));
+    setPreviewIdx(i);
+  }
+  function addFollowUp() {
+    setSteps((all) => [...all, blankFollowUp()]);
+    setPreviewIdx(steps.length);
   }
   function move(i: number, dir: -1 | 1) {
     setSteps((all) => {
@@ -482,7 +495,7 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0, addOnOpen = 
         ))}
         {!readOnly && (
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button type="button" variant="outline" disabled={steps.length >= 20} onClick={() => setSteps((all) => [...all, blankFollowUp()])}>
+            <Button type="button" variant="outline" disabled={steps.length >= 20} onClick={addFollowUp}>
               <Plus /> Add follow-up
             </Button>
             <div className="flex items-center gap-2">
@@ -500,9 +513,9 @@ export function SequenceEditor({ campaign, canWrite, addSignal = 0, addOnOpen = 
       </div>
       <Card className="h-fit lg:sticky lg:top-20">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-sm">Preview · {stepLabel(Math.min(previewIdx, steps.length - 1) + 1, previewStep?.name)}</CardTitle>
+          <CardTitle className="text-sm">Preview · {stepLabel(shownIdx + 1, previewStep?.name)}</CardTitle>
           {canWrite && previewStep && (
-            <Button size="sm" variant="outline" disabled={!previewStep.body.trim()} onClick={() => setTestStep(previewStep)}>
+            <Button size="sm" variant="outline" disabled={!previewStep.body.trim()} onClick={() => setTestStep({ ...previewStep, subject: previewSubject })}>
               <Send /> Test
             </Button>
           )}

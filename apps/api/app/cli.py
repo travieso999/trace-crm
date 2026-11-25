@@ -98,7 +98,7 @@ def companies_cleanup(apply: bool) -> None:
 def campaigns_missing_data(apply: bool) -> None:
     """Prospects that went into a campaign without the data its emails need, and so show as failed: take them out as
     "missing data" (they can be added back once filled in) and stop counting their blocked emails as failed sends."""
-    from sqlalchemy import update
+    from sqlalchemy import delete, update
 
     from app.core.db import session_scope
     from app.models import Campaign, CampaignContact, EmailEvent, ScheduledMessage
@@ -122,7 +122,8 @@ def campaigns_missing_data(apply: bool) -> None:
                 cc.status, cc.stop_reason, cc.next_send_at = "removed", MISSING_DATA, None
             db.execute(update(ScheduledMessage).where(blocked).values(
                 status="cancelled", last_error=func.concat("Not sent: ", ScheduledMessage.last_error)))
-            db.execute(update(EmailEvent).where(failed_ev).values(type="not_sent"))
+            # they only ever said "not sent: missing data", which the cancelled message and the prospect's activity keep
+            db.execute(delete(EmailEvent).where(failed_ev))
     verb = "Took" if apply else "Dry run: would take"
     print(f"{verb} {len(rows)} prospect(s) out as missing data; {n_msgs} blocked email(s) no longer counted as failed"
           f" ({n_events} event(s))." + ("" if apply else " Run with --apply to do it."))

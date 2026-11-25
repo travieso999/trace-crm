@@ -238,17 +238,71 @@ def test_unsubscribe_reply_and_link(client, app, db, outbox, compliance):
 
 
 def test_missing_variable_blocks_send(client, db, outbox, compliance):
+    """Data that goes missing after enrollment (the email was edited to use a field the prospect doesn't have) never
+    sends a broken email, and isn't a failure either: the prospect leaves as "missing data" and can be added back."""
     mid = setup_mailbox(client, db)
     [contact_id] = make_contacts(client, "owner@acmebail.com")
+    cid = setup_campaign(client, mid, [contact_id], steps=[{"subject": "Hi {{first_name}}", "body": "Hello."}])
     steps = [{"subject": "Hi {{first_name}}", "body": "Saw your {{favorite_color}} logo."}]
-    cid = setup_campaign(client, mid, [contact_id], steps=steps)
+    assert client.put(f"/api/campaigns/{cid}/steps", json={"steps": steps}).status_code == 200
     pre = client.get(f"/api/campaigns/{cid}/preflight").json()
     assert pre["variables"] == {"leads_blocked": 1, "by_variable": {"favorite_color": 1}}
     assert sending.send_due() == {"missing_variables": 1}
     assert sent_files(outbox) == []
     db.expire_all()
     cc = db.scalar(select(CampaignContact))
-    assert cc.status == "error" and cc.stop_reason == "missing_variables"
+    assert cc.status == "removed" and cc.stop_reason == "missing_data"
+    assert db.scalar(select(ScheduledMessage)).status == "cancelled"
+    assert db.scalar(select(func.count()).select_from(EmailEvent).where(EmailEvent.type == "failed")) == 0
+
+    # filled in and added back: the email goes out
+    client.patch(f"/api/contacts/{contact_id}", json={"custom_fields": {"favorite_color": "red"}})
+    assert client.post(f"/api/campaigns/{cid}/contacts", json={"contact_ids": [contact_id]}).json()["enrolled"] == 1
+    assert sending.send_due() == {"sent": 1}
+
+
+def _no_name(client, email="info@lonestarbail.com") -> str:
+    r = client.post("/api/contacts", json={"email": email, "company_name": "Lone Star Bail"})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def test_prospects_without_a_name_never_join_a_campaign(client, db, outbox, compliance):
+    """The rule: a prospect the emails can't be written for (no first name for {{first_name}}) stays out of the
+    campaign, whichever way they're added, and so can never show up as failed."""
+    mid = setup_mailbox(client, db)
+    [named] = make_contacts(client, "jane@doebail.com")
+    nameless = _no_name(client)
+    cid = setup_campaign(client, mid, [named])
+
+    # straight add (no only_ready), bulk "Add to campaign" on Prospects, copy from another campaign
+    r = client.post(f"/api/campaigns/{cid}/contacts", json={"contact_ids": [nameless]}).json()
+    assert r["enrolled"] == 0 and r["skipped_missing_fields"] == 1
+    r = client.post("/api/contacts/bulk", json={"ids": [nameless], "action": "assign_campaign", "value": cid})
+    assert r.status_code == 200 and r.json()["updated"] == 0
+    other = client.post("/api/campaigns", json={"name": "Other", "mailbox_ids": [mid]}).json()["id"]
+    client.put(f"/api/campaigns/{other}/steps", json={"steps": [{"subject": "Hello", "body": "Hello there."}]})
+    assert client.post(f"/api/campaigns/{other}/contacts", json={"contact_ids": [nameless]}).json()["enrolled"] == 1
+    r = client.post(f"/api/campaigns/{other}/contacts/bulk", json={"action": "move", "contact_ids": [nameless], "target_campaign_id": cid})
+    assert r.status_code == 200, r.text
+    assert r.json()["enrolled"] == 0 and r.json()["removed_from_source"] == 0  # a move never strands them
+    db.expire_all()
+    assert db.scalar(select(func.count()).select_from(CampaignContact).where(
+        CampaignContact.campaign_id == cid, CampaignContact.contact_id == nameless)) == 0
+    assert db.scalar(select(CampaignContact.status).where(
+        CampaignContact.campaign_id == other, CampaignContact.contact_id == nameless)) == "active"
+
+    assert sending.send_due().get("missing_variables") is None
+    assert db.scalar(select(func.count()).select_from(ScheduledMessage).where(ScheduledMessage.status == "failed")) == 0
+
+
+def test_a_fallback_lets_prospects_without_a_name_in(client, db, outbox, compliance):
+    mid = setup_mailbox(client, db)
+    nameless = _no_name(client)
+    steps = [{"subject": "Quick question", "body": "Hi {{first_name|there}},\n\nAre you taking new clients?"}]
+    setup_campaign(client, mid, [nameless], steps=steps)
+    assert sending.send_due() == {"sent": 1}
+    assert "Hi there," in sent_files(outbox)[0].get_body(("plain",)).get_content()
 
 
 def test_fallback_policy_fills_missing_variable(client, db, outbox, compliance):

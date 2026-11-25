@@ -3,6 +3,7 @@
     python -m app.cli create-admin --email you@tracestudio.com --name "Your Name"
     python -m app.cli generate-keys
     python -m app.cli inbox-cleanup [--apply]   # hide non-campaign conversations from the Unified Inbox
+    python -m app.cli campaigns-missing-data [--apply]   # prospects shown as failed for missing names/data
     python -m app.cli attribution-check --at 2026-11-16T10:02:00-05:00 [--minutes 60] [--email typed@x.com]
 """
 
@@ -94,6 +95,39 @@ def companies_cleanup(apply: bool) -> None:
           + ("" if apply else " Run with --apply to archive them."))
 
 
+def campaigns_missing_data(apply: bool) -> None:
+    """Prospects that went into a campaign without the data its emails need, and so show as failed: take them out as
+    "missing data" (they can be added back once filled in) and stop counting their blocked emails as failed sends."""
+    from sqlalchemy import update
+
+    from app.core.db import session_scope
+    from app.models import Campaign, CampaignContact, EmailEvent, ScheduledMessage
+    from app.services.campaigns import MISSING_DATA
+
+    with session_scope() as db:
+        rows = db.execute(select(CampaignContact, Campaign.name).join(Campaign, Campaign.id == CampaignContact.campaign_id)
+                          .where(CampaignContact.status == "error",
+                                 CampaignContact.stop_reason == "missing_variables")).all()
+        per: dict[str, int] = {}
+        for _, name in rows:
+            per[name] = per.get(name, 0) + 1
+        for name, n in sorted(per.items()):
+            print(f"  {name}: {n}")
+        blocked = (ScheduledMessage.status == "failed") & ScheduledMessage.last_error.like("Missing values for:%")
+        n_msgs = db.scalar(select(func.count()).select_from(ScheduledMessage).where(blocked))
+        failed_ev = (EmailEvent.type == "failed") & EmailEvent.data["reason"].astext.like("Missing values for:%")
+        n_events = db.scalar(select(func.count()).select_from(EmailEvent).where(failed_ev))
+        if apply:
+            for cc, _ in rows:
+                cc.status, cc.stop_reason, cc.next_send_at = "removed", MISSING_DATA, None
+            db.execute(update(ScheduledMessage).where(blocked).values(
+                status="cancelled", last_error=func.concat("Not sent: ", ScheduledMessage.last_error)))
+            db.execute(update(EmailEvent).where(failed_ev).values(type="not_sent"))
+    verb = "Took" if apply else "Dry run: would take"
+    print(f"{verb} {len(rows)} prospect(s) out as missing data; {n_msgs} blocked email(s) no longer counted as failed"
+          f" ({n_events} event(s))." + ("" if apply else " Run with --apply to do it."))
+
+
 def attribution_check(at: str, minutes: int, email: str | None) -> None:
     """Read-only: could a demo submission at this moment be tied to a campaign recipient?"""
     from datetime import datetime
@@ -124,6 +158,9 @@ def main() -> None:
     c.add_argument("--apply", action="store_true", help="Actually hide them")
     cc = sub.add_parser("companies-cleanup", help="Archive companies auto-created from imports (dry run by default)")
     cc.add_argument("--apply", action="store_true", help="Actually archive them")
+    cm = sub.add_parser("campaigns-missing-data",
+                        help="Take prospects stuck as failed for missing data out of their campaigns (dry run by default)")
+    cm.add_argument("--apply", action="store_true", help="Actually do it")
     ac = sub.add_parser("attribution-check", help="Read-only: can a demo submission be tied to a recipient?")
     ac.add_argument("--at", required=True, help="Submission time with offset, e.g. 2026-11-16T10:02:00-05:00")
     ac.add_argument("--minutes", type=int, default=60, help="Window either side of --at")
@@ -137,6 +174,8 @@ def main() -> None:
         inbox_cleanup(args.apply)
     elif args.cmd == "companies-cleanup":
         companies_cleanup(args.apply)
+    elif args.cmd == "campaigns-missing-data":
+        campaigns_missing_data(args.apply)
     elif args.cmd == "attribution-check":
         attribution_check(args.at, args.minutes, args.email)
     elif args.cmd == "generate-keys":

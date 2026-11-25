@@ -205,6 +205,28 @@ def test_enrollment_dry_run_then_only_ready(client, db):
     assert db.scalar(select(func.count()).select_from(SentMessage)) == 0
 
 
+def test_import_into_a_campaign_leaves_out_prospects_without_a_name(client, db):
+    """How the failed prospects of Nov 2026 got in: an upload sent straight to a campaign added the whole list. Now
+    the prospects its emails can't be written for stay out (on the Missing names list), and are added once filled."""
+    cid = client.post("/api/campaigns", json={"name": "Kentucky"}).json()["id"]
+    client.put(f"/api/campaigns/{cid}/steps", json={"steps": STEPS})
+    sheet = (b"Name,Company,Email\n"
+             b"Jane Doe,Doe Bail,jane@doebail.com\n"
+             b"Lone Star Bail Bonds LLC,Lone Star Bail Bonds,info@lonestarbail.com\n")
+    r = _upload(client, sheet, "kentucky.csv", campaign_id=cid)
+    assert r.status_code == 200, r.text
+    assert r.json()["enrollment"]["enrolled"] == 1 and r.json()["enrollment"]["skipped_missing_fields"] == 1
+    assert set(db.scalars(select(Contact.email).join(CampaignContact, CampaignContact.contact_id == Contact.id))) == {
+        "jane@doebail.com"}
+    assert client.get("/api/contacts/count", params={"missing_name": "true"}).json()["total"] == 1
+
+    # names filled in and uploaded back to the same campaign: now they join
+    filled = b"Email,First Name\ninfo@lonestarbail.com,Maria\n"
+    r = _upload(client, filled, "filled.csv", campaign_id=cid, duplicate_strategy="update")
+    assert r.status_code == 200, r.text
+    assert r.json()["enrollment"]["enrolled"] == 1 and r.json()["enrollment"]["skipped_missing_fields"] == 0
+
+
 def test_per_lead_personalized_preview(client, db):
     cid, ids = _setup(client, db)
     p = client.get(f"/api/campaigns/{cid}/preview/{ids['ready@a.com']}").json()

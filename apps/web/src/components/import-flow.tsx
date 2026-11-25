@@ -58,7 +58,7 @@ type Result = {
   batch_id: string | null;
   list_name: string | null;
   list_contacts: number;
-  enrollment: { enrolled: number; skipped_existing: number; skipped_suppressed: number; skipped_invalid: number } | null;
+  enrollment: { enrolled: number; skipped_existing: number; skipped_suppressed: number; skipped_invalid: number; skipped_missing_fields?: number } | null;
 };
 
 export type ImportResult = Result;
@@ -280,7 +280,9 @@ export function ImportFlow({ campaignId, campaignName, onImported }: { campaignI
       setResult(r);
       if (!dryRun) {
         toast.success(`Saved as list “${r.list_name}” · ${num(r.list_contacts)} prospects`, {
-          description: r.enrollment ? `${num(r.enrollment.enrolled)} added to ${campaignName ?? "the campaign"}` : `${num(r.created)} new, ${num(r.updated)} updated`,
+          description: r.enrollment
+            ? `${num(r.enrollment.enrolled)} added to ${campaignName ?? "the campaign"}${r.enrollment.skipped_missing_fields ? ` · ${num(r.enrollment.skipped_missing_fields)} missing a name or data, not added` : ""}`
+            : `${num(r.created)} new, ${num(r.updated)} updated`,
         });
         qc.invalidateQueries({ queryKey: ["import-lists"] });
         qc.invalidateQueries({ queryKey: ["missing-names"] });
@@ -479,6 +481,10 @@ export function ImportFlow({ campaignId, campaignName, onImported }: { campaignI
                     ` ${num(result.enrollment.enrolled)} added to ${campaignName ?? "the campaign"}${
                       result.enrollment.skipped_suppressed + result.enrollment.skipped_invalid
                         ? `; ${num(result.enrollment.skipped_suppressed + result.enrollment.skipped_invalid)} skipped (suppressed, invalid or closed)`
+                        : ""
+                    }${
+                      result.enrollment.skipped_missing_fields
+                        ? `; ${num(result.enrollment.skipped_missing_fields)} not added because the emails need a name or other data they don’t have (fill it in from Imported Lists → Missing names, then add them)`
                         : ""
                     }.`}
                 </span>

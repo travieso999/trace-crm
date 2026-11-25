@@ -243,13 +243,19 @@ def dispatch_due(db: Session, now: datetime | None = None) -> list[uuid.UUID]:
                 campaign.last_error = "No connected mailbox is available"
                 continue
             claimed[cc.email_account_id] = claimed.get(cc.email_account_id, 0) + 1
-        db.execute(
-            insert(ScheduledMessage).values(
-                id=uuid.uuid4(), campaign_contact_id=cc.id, sequence_step_id=step.id, campaign_id=campaign.id,
-                email_account_id=cc.email_account_id, status="queued", due_at=cc.next_send_at, attempts=0,
-                created_at=now, updated_at=now,
-            ).on_conflict_do_nothing(constraint="uq_scheduled_messages_cc_step")
+        stmt = insert(ScheduledMessage).values(
+            id=uuid.uuid4(), campaign_contact_id=cc.id, sequence_step_id=step.id, campaign_id=campaign.id,
+            email_account_id=cc.email_account_id, status="queued", due_at=cc.next_send_at, attempts=0,
+            created_at=now, updated_at=now,
         )
+        # One message per prospect and step. A cancelled one never went out (the prospect was removed, or data was
+        # missing, before it sent): a prospect added back gets it queued again instead of waiting forever.
+        db.execute(stmt.on_conflict_do_update(
+            constraint="uq_scheduled_messages_cc_step",
+            set_={"status": "queued", "due_at": stmt.excluded.due_at, "email_account_id": stmt.excluded.email_account_id,
+                  "attempts": 0, "last_error": None, "updated_at": now},
+            where=ScheduledMessage.status == "cancelled",
+        ))
     db.flush()
     for campaign in campaigns.values():
         campaign_service.maybe_complete(db, campaign)
@@ -378,10 +384,14 @@ def _reserve(sm_id: uuid.UUID) -> _Reserved | str:
         try:
             rendered = render_step(db, campaign, step, cc, contact, mailbox)
         except MissingVariables as exc:
-            sm.status, sm.last_error = "failed", str(exc)
-            cc.status, cc.stop_reason, cc.next_send_at = "error", "missing_variables", None
-            db.add(EmailEvent(type="failed", contact_id=contact.id, campaign_id=campaign.id,
-                              email_account_id=mailbox.id, data={"reason": str(exc)}))
+            # The data went missing after enrollment (enrolling already skips these), e.g. the email was edited to use
+            # {{company_name}}. Not a failed send: the prospect leaves the campaign as "missing data" and can be added
+            # back once it's filled in, continuing after the last email they received.
+            sm.status, sm.last_error = "cancelled", f"Not sent: {exc}"
+            cc.status, cc.stop_reason, cc.next_send_at = "removed", campaign_service.MISSING_DATA, None
+            log_activity(db, contact.id, "campaign",
+                         f"Taken out of campaign “{campaign.name}”: no {', '.join(exc.names)} for the email",
+                         None, campaign_id=str(campaign.id))
             db.commit()
             return "missing_variables"
         # per-recipient tracked links (and the open pixel, when on); a retry reuses the same tokens

@@ -35,6 +35,9 @@ LIVE = ("active", "paused")
 # last_error of a message pushed to the next sending window; a changed schedule releases these
 OUTSIDE_WINDOW = "outside sending window"
 
+# stop_reason of a prospect taken out because the emails can't be filled in for them (e.g. no first name); re-addable
+MISSING_DATA = "missing_data"
+
 # Allowed transitions: current -> {target: action name}
 TRANSITIONS: dict[str, set[str]] = {
     "draft": {"scheduled", "active"},
@@ -250,21 +253,28 @@ def maybe_complete(db: Session, campaign: Campaign) -> bool:
 
 def enroll_contacts(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID], user: User | None,
                     *, reactivate_removed: bool = True) -> dict:
-    """Add prospects. Skips the suppressed, invalid emails, closed stages and prospects already in the campaign.
+    """Add prospects. Skips the suppressed, invalid emails, closed stages, prospects already in the campaign, and
+    prospects the campaign's emails can't be written for (e.g. no first name for {{first_name}} and no fallback).
+    Every way into a campaign (import, bulk add, copy/move, relaunch, dynamic audience) comes through here, so the
+    missing-data rule can't be bypassed: those prospects stay on the Missing names list until the data is filled.
     A prospect removed by hand comes back only when added explicitly (not by a dynamic audience) and continues
     after the last step they received, so no step is ever sent twice."""
+    from app.services.enrollment import missing_by_contact
+
     if campaign.status in ("completed", "stopped") or campaign.archived_at:
         raise CampaignError("Cannot add prospects to a finished or archived campaign")
     ids = list(dict.fromkeys(contact_ids))
+    result = {"enrolled": 0, "skipped_existing": 0, "skipped_suppressed": 0, "skipped_invalid": 0,
+              "skipped_missing_fields": 0}
     if not ids:
-        return {"enrolled": 0, "skipped_existing": 0, "skipped_suppressed": 0, "skipped_invalid": 0}
+        return result
     contacts = list(db.scalars(select(Contact).where(Contact.id.in_(ids), Contact.deleted_at.is_(None))))
     rows = {cc.contact_id: cc for cc in db.scalars(select(CampaignContact).where(
         CampaignContact.campaign_id == campaign.id, CampaignContact.contact_id.in_(ids)))}
     existing = {cid for cid, cc in rows.items() if not (reactivate_removed and cc.status == "removed")}
     suppressed = set(db.scalars(select(SuppressionEntry.email).where(SuppressionEntry.email.in_([c.email for c in contacts]))))
+    missing = missing_by_contact(db, campaign, [c for c in contacts if c.id not in existing])
     now = utcnow()
-    result = {"enrolled": 0, "skipped_existing": 0, "skipped_suppressed": 0, "skipped_invalid": 0}
     for c in contacts:
         if c.id in existing:
             result["skipped_existing"] += 1
@@ -272,6 +282,8 @@ def enroll_contacts(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID
             result["skipped_suppressed"] += 1
         elif c.verification_status == "invalid" or c.lead_status in ("not_interested", "won", "lost"):
             result["skipped_invalid"] += 1
+        elif c.id in missing:
+            result["skipped_missing_fields"] += 1
         elif c.id in rows:  # removed earlier, added back on purpose
             cc = rows[c.id]
             cc.status, cc.stop_reason, cc.paused_at = "active", None, None
@@ -609,9 +621,13 @@ def copy_contacts(db: Session, source: Campaign, target: Campaign, contact_ids: 
         CampaignContact.campaign_id == source.id, CampaignContact.contact_id.in_(contact_ids))))
     result = enroll_contacts(db, target, in_source, user)
     if move:
-        for cid in in_source:
+        # only those now in the target: anyone it skipped (suppressed, missing a name...) stays where they were
+        in_target = list(db.scalars(select(CampaignContact.contact_id).where(
+            CampaignContact.campaign_id == target.id, CampaignContact.contact_id.in_(in_source),
+            CampaignContact.status != "removed")))
+        for cid in in_target:
             remove_contact(db, source, cid)
-        result["removed_from_source"] = len(in_source)
+        result["removed_from_source"] = len(in_target)
     return result
 
 

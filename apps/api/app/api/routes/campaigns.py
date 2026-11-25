@@ -492,7 +492,9 @@ def campaign_contacts_bulk(campaign_id: uuid.UUID, body: CampaignBulkIn, request
             r = svc.copy_contacts(db, c, target, ids, user, move=body.action == "move")
             result = {**r, "affected": r["enrolled"],
                       "message": f"{r['enrolled']} prospect(s) added to “{target.name}”"
-                                 + (" and removed from this campaign" if body.action == "move" else "")}
+                                 + (" and removed from this campaign" if body.action == "move" else "")
+                                 + (f"; {r['skipped_missing_fields']} missing a name or data its emails need, not added"
+                                    if r["skipped_missing_fields"] else "")}
         else:  # add_tag
             if not (body.tag or "").strip():
                 raise HTTPException(422, "Tag name required")

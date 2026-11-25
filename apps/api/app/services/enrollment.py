@@ -6,10 +6,10 @@ from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Campaign, CampaignContact, Contact
+from app.models import AiPersonalization, Campaign, CampaignContact, Contact
 from app.models.base import utcnow
 from app.services import cooldown, sending, video_assets
-from app.services.contacts import suppressed_set
+from app.services.contacts import suppressed_set, template_variables
 from app.services.rendering import MissingVariables, render_email, render_string
 
 CLOSED_STAGES = ("won", "lost", "not_interested")
@@ -18,7 +18,32 @@ STATUSES = ("ready", "missing_fields", "already_enrolled", "suppressed", "invali
 
 
 def missing_variables(db: Session, campaign: Campaign, contact: Contact) -> list[str]:
-    vars_ = sending.contact_variables(db, contact)
+    return _missing(campaign, sending.contact_variables(db, contact))
+
+
+def missing_by_contact(db: Session, campaign: Campaign, contacts: list[Contact]) -> dict[uuid.UUID, list[str]]:
+    """missing_variables for many prospects at once (one query for approved AI intros instead of one per prospect).
+    Only prospects with something missing are in the result."""
+    if not contacts or not campaign.steps:
+        return {}
+    intros: dict[uuid.UUID, str] = {}
+    rows = db.execute(select(AiPersonalization.contact_id, AiPersonalization.final_text).where(
+        AiPersonalization.contact_id.in_([c.id for c in contacts]), AiPersonalization.status == "approved",
+    ).order_by(AiPersonalization.approved_at.asc())).all()
+    for cid, txt in rows:  # ascending, so the latest approved wins, as in contact_variables
+        if txt:
+            intros[cid] = txt
+    out = {}
+    for c in contacts:
+        vars_ = template_variables(c)
+        if c.id in intros:
+            vars_["custom_intro"] = intros[c.id]
+        if missing := _missing(campaign, vars_):
+            out[c.id] = missing
+    return out
+
+
+def _missing(campaign: Campaign, vars_: dict[str, str]) -> list[str]:
     missing: set[str] = set()
     for s in campaign.steps:
         templates = [s.body] + ([s.subject] if s.position == 1 or not s.reply_in_thread else [])

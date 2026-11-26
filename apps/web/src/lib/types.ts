@@ -51,6 +51,7 @@ export type Contact = {
   last_name: string | null;
   company_id: string | null;
   company_name: string | null;
+  missing_fields?: ("first_name" | "company_name")[];
   website: string | null;
   phone: string | null;
   city: string | null;

@@ -15,6 +15,7 @@ from app.core.db import get_db
 from app.models import (
     Campaign,
     CampaignContact,
+    Company,
     Contact,
     CrmActivity,
     ScheduledMessage,
@@ -89,11 +90,12 @@ def contact_filter(
     participation: str | None = Query(None, pattern="^(never|previous)$"),
     company_id: uuid.UUID | None = None,
     missing_name: bool | None = None,
+    missing_data: bool | None = None,
 ) -> AudienceFilter:
     return AudienceFilter(q=q, lead_status=lead_status, verification_status=verification_status, state=state,
                           city=city, industry=industry, tag=tag, batch_id=batch_id, campaign_id=campaign_id,
                           not_in_campaign_id=not_in_campaign_id, participation=participation, company_id=company_id,
-                          missing_name=missing_name or None)
+                          missing_name=missing_name or None, missing_data=missing_data or None)
 
 
 def _out(db: Session, contacts: list[Contact]) -> list[ContactOut]:
@@ -109,10 +111,17 @@ def _out(db: Session, contacts: list[Contact]) -> list[ContactOut]:
     for cid, camp_id, name, st in rows:
         enrollments.setdefault(cid, []).append({"id": str(camp_id), "name": name, "status": st})
     out = []
+    # linked companies in one query, for the company_name merge value (instead of one lazy load per prospect)
+    company_ids = {c.company_id for c in contacts if c.company_id and not (c.company_name or "").strip()}
+    companies = {co.id: co for co in db.scalars(select(Company).where(Company.id.in_(company_ids)))} if company_ids else {}
     for c in contacts:
         o = ContactOut.model_validate(c)
         o.suppressed = c.email in suppressed
         o.campaigns = enrollments.get(c.id, [])
+        co = companies.get(c.company_id)
+        has_company = bool((c.company_name or "").strip()) or bool(co and (co.name or "").strip() and co.name != co.domain)
+        o.missing_fields = [f for f, ok in (("first_name", bool((c.first_name or "").strip())),
+                                            ("company_name", has_company)) if not ok]
         out.append(o)
     return out
 
@@ -174,22 +183,22 @@ def export_missing_names(
     user: User = Depends(require_perm("prospects.export")),
     db: Session = Depends(get_db),
 ):
-    """Prospects with no first name, with only the columns needed to look the name up (e.g. by asking Claude).
-    first_name / last_name are left blank to fill in; uploading the filled file with "Fill in their blank fields"
-    stores the names, and the prospects drop out of this list."""
+    """Prospects with no first name or no company name (the Missing data tab), with only the columns needed to look
+    them up (e.g. by asking Claude). The missing columns are left blank to fill in; uploading the filled file with
+    "Fill in their blank fields" stores them, and the prospects drop out of this list."""
     if not ratelimit.hit(f"export:{user.id}", get_settings().export_limit_per_hour, 3600):
         audit(db, user, "contacts.export_refused", "contact", None, request, reason="hourly limit")
         db.commit()
         raise HTTPException(429, "Export limit reached for this hour")
-    contacts = list(db.scalars(contacts_query(AudienceFilter(missing_name=True)).order_by(Contact.created_at).limit(100_000)))
-    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts), filters={"missing_name": "true"})
+    contacts = list(db.scalars(contacts_query(AudienceFilter(missing_data=True)).order_by(Contact.created_at).limit(100_000)))
+    audit(db, user, "contacts.exported", "contact", None, request, count=len(contacts), filters={"missing_data": "true"})
     security_alerts.notify_admins(db, f"Prospects exported by {user.display_name}",
-                                  f"{user.display_name} downloaded {len(contacts)} prospect(s) with missing names as CSV.")
+                                  f"{user.display_name} downloaded {len(contacts)} prospect(s) with a missing name or company as CSV.")
     db.commit()
     return Response(
         export_missing_names_csv(contacts),
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="missing-names-{utcnow():%Y%m%d}.csv"'},
+        headers={"Content-Disposition": f'attachment; filename="missing-data-{utcnow():%Y%m%d}.csv"'},
     )
 
 

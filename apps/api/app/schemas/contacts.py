@@ -96,6 +96,8 @@ class ContactOut(ORMModel):
     updated_at: datetime
     suppressed: bool = False
     campaigns: list[dict] = []
+    # what {{first_name}} / {{company_name}} would lack: "first_name", "company_name" (the Missing data tab)
+    missing_fields: list[str] = []
 
 
 class ActivityOut(ORMModel):

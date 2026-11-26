@@ -484,7 +484,7 @@ export function ImportFlow({ campaignId, campaignName, onImported }: { campaignI
                         : ""
                     }${
                       result.enrollment.skipped_missing_fields
-                        ? `; ${num(result.enrollment.skipped_missing_fields)} not added because the emails need a name or other data they don’t have (fill it in from Imported Lists → Missing names, then add them)`
+                        ? `; ${num(result.enrollment.skipped_missing_fields)} not added because the emails need a name or other data they don’t have (fill it in from Imported Lists → Missing data, then add them)`
                         : ""
                     }.`}
                 </span>

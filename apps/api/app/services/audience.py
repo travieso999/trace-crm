@@ -5,9 +5,9 @@ import uuid
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, exists, func, or_, select
 
-from app.models import CampaignContact, Contact, Tag, contact_tags, import_batch_members
+from app.models import CampaignContact, Company, Contact, Tag, contact_tags, import_batch_members
 
 
 class AudienceFilter(BaseModel):
@@ -25,6 +25,8 @@ class AudienceFilter(BaseModel):
     participation: Literal["never", "previous"] | None = None
     company_id: uuid.UUID | None = None
     missing_name: bool | None = None  # no first name, so {{first_name}} can't be used
+    # no first name or no company name, so {{first_name}} or {{company_name}} can't be used: the Missing data tab
+    missing_data: bool | None = None
     custom: dict[str, str] = Field(default_factory=dict)  # custom field name -> value (case-insensitive match)
 
     @field_validator("custom")
@@ -84,9 +86,23 @@ def contacts_query(f: AudienceFilter) -> Select:
         stmt = stmt.where(Contact.company_id == f.company_id)
     if f.missing_name:
         stmt = stmt.where(func.coalesce(func.trim(Contact.first_name), "") == "")
+    if f.missing_data:
+        stmt = stmt.where(or_(no_first_name(), no_company_name()))
     for key, value in f.custom.items():
         stmt = stmt.where(func.lower(Contact.custom_fields[key].astext) == value.strip().lower())
     return stmt
+
+
+def no_first_name():
+    return func.coalesce(func.trim(Contact.first_name), "") == ""
+
+
+def no_company_name():
+    """True when {{company_name}} would be empty: the same rule as template_variables (the prospect's own company name,
+    else the linked company's, unless that is only its domain)."""
+    real_company = exists().where(Company.id == Contact.company_id, func.coalesce(func.trim(Company.name), "") != "",
+                                  Company.name.is_distinct_from(Company.domain))
+    return and_(func.coalesce(func.trim(Contact.company_name), "") == "", ~real_company)
 
 
 def count(db, f: AudienceFilter) -> int:

@@ -427,8 +427,8 @@ def export_contacts_csv(contacts: list[Contact]) -> str:
 
 
 def export_missing_names_csv(contacts: list[Contact]) -> str:
-    """Prospects with no first name, ready to have the names looked up. first_name / last_name come out blank to be
-    filled in; the headers map straight back on re-import. The name exactly as the upload had it is in
+    """Prospects with no first name or no company name, ready to have them looked up. The missing ones come out blank
+    to be filled in; the headers map straight back on re-import. The name exactly as the upload had it is in
     "original_text" (not a header the importer reads as a name, so re-importing never re-splits it)."""
     out = io.StringIO()
     cols = ["email", "first_name", "last_name", "company_name", "website", "job_title", "city", "state",

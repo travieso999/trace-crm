@@ -143,19 +143,25 @@ function RenameDialog({ list, onOpenChange }: { list: ImportList | null; onOpenC
 
 const MISSING_PAGE = 200;
 
-/** Every prospect without a first name, from any upload, in one place: export it, have the names looked up (e.g. by
- *  Claude), and upload the file back. A prospect leaves this tab as soon as it has a first name. */
+function missingOf(c: Contact) {
+  const m = c.missing_fields ?? [];
+  return [m.includes("first_name") && "First name", m.includes("company_name") && "Company"].filter(Boolean).join(", ") || "—";
+}
+
+/** Every prospect without a first name or a company name, from any upload, in one place: export it, have them looked
+ *  up (e.g. by Claude), and upload the file back. A prospect leaves this tab once both are filled in. Campaigns never
+ *  take these prospects when their emails use {{first_name}} / {{company_name}} without a fallback. */
 function MissingNames({ canWrite }: { canWrite: boolean }) {
   const canExport = useCan("prospects.export");
   const missing = useQuery({
     queryKey: ["missing-names"],
-    queryFn: () => api<Page<Contact>>("/api/contacts", { query: { missing_name: "true", sort: "created_at", order: "desc", page_size: MISSING_PAGE } }),
+    queryFn: () => api<Page<Contact>>("/api/contacts", { query: { missing_data: "true", sort: "created_at", order: "desc", page_size: MISSING_PAGE } }),
   });
   const [exporting, setExporting] = React.useState(false);
   async function exportMissing() {
     setExporting(true);
     try {
-      await download("/api/contacts/missing-names/export", undefined, "missing-names.csv");
+      await download("/api/contacts/missing-names/export", undefined, "missing-data.csv");
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -170,8 +176,8 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
     return (
       <EmptyState
         icon={UserCheck}
-        title="Every prospect has a first name"
-        description="When an upload has rows without a usable first name (for example only a company name), they collect here so you can look the names up in one go."
+        title="Every prospect has a first name and a company name"
+        description="When an upload has rows without a usable first name or company name, they collect here so you can look them up in one go."
       />
     );
   return (
@@ -179,14 +185,15 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
       <div className="grid gap-3 rounded-xl border p-4 sm:flex sm:items-start sm:justify-between">
         <div className="text-sm">
           <p className="font-medium">
-            {num(total)} prospect{total === 1 ? "" : "s"} without a first name, so {"{{first_name}}"} can’t be used for them.
+            {num(total)} prospect{total === 1 ? "" : "s"} without a first name or company name, so campaigns using {"{{first_name}}"} or{" "}
+            {"{{company_name}}"} leave them out until they’re filled in.
           </p>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted-foreground">
-            <li>Export the list. It has the email, company, website and the name exactly as uploaded, with blank first_name and last_name columns.</li>
-            <li>Give the file to Claude and ask it to fill in first_name and last_name, keeping every other column as it is.</li>
+            <li>Export the list. It has the email, website and the name exactly as uploaded; what’s missing is left blank.</li>
+            <li>Give the file to Claude and ask it to fill in the blank first_name, last_name and company_name, keeping every other column as it is.</li>
             <li>
               Upload the filled file and choose <span className="font-medium text-foreground">“Fill in their blank fields”</span> for prospects already in
-              Prospects. They leave this tab once they have a name.
+              Prospects. They leave this tab once both are filled in.
             </li>
           </ol>
         </div>
@@ -208,6 +215,7 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
           <TableHeader>
             <TableRow>
               <TableHead>Email</TableHead>
+              <TableHead>Missing</TableHead>
               <TableHead>Company</TableHead>
               <TableHead className="hidden md:table-cell">Name as uploaded</TableHead>
               <TableHead className="hidden lg:table-cell">Website</TableHead>
@@ -222,6 +230,7 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
                     {c.email}
                   </Link>
                 </TableCell>
+                <TableCell className="whitespace-nowrap text-sm">{missingOf(c)}</TableCell>
                 <TableCell className="max-w-56 truncate">{c.company_name ?? <span className="text-muted-foreground">—</span>}</TableCell>
                 <TableCell className="hidden max-w-56 truncate text-muted-foreground md:table-cell">{c.custom_fields?.source_name ?? "—"}</TableCell>
                 <TableCell className="hidden max-w-56 truncate text-muted-foreground lg:table-cell">{c.website ?? "—"}</TableCell>
@@ -248,7 +257,7 @@ export default function ImportedListsPage() {
   const lists = useQuery({ queryKey: ["import-lists"], queryFn: () => api<ImportList[]>("/api/imports") });
   const missingCount = useQuery({
     queryKey: ["missing-names", "count"],
-    queryFn: () => api<{ total: number }>("/api/contacts/count", { query: { missing_name: "true" } }),
+    queryFn: () => api<{ total: number }>("/api/contacts/count", { query: { missing_data: "true" } }),
   });
   const [adding, setAdding] = React.useState<ImportList | null>(null);
   const [renaming, setRenaming] = React.useState<ImportList | null>(null);
@@ -287,7 +296,7 @@ export default function ImportedListsPage() {
       <Tabs defaultValue="lists">
         <TabsList variant="line" className="mb-4">
           <TabsTrigger value="lists">Lists</TabsTrigger>
-          <TabsTrigger value="missing">Missing names{missingCount.data ? ` (${num(missingCount.data.total)})` : ""}</TabsTrigger>
+          <TabsTrigger value="missing">Missing data{missingCount.data ? ` (${num(missingCount.data.total)})` : ""}</TabsTrigger>
         </TabsList>
         <TabsContent value="missing">
           <MissingNames canWrite={canWrite} />

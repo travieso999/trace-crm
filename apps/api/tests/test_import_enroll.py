@@ -227,6 +227,34 @@ def test_import_into_a_campaign_leaves_out_prospects_without_a_name(client, db):
     assert r.json()["enrollment"]["enrolled"] == 1 and r.json()["enrollment"]["skipped_missing_fields"] == 0
 
 
+def test_missing_data_tab_also_lists_prospects_without_a_company(client, db):
+    """The tab holds everyone a campaign would leave out for {{first_name}} or {{company_name}}, says what each one
+    lacks, and they leave it once the export is filled in and uploaded back."""
+    sheet = (b"First Name,Company,Email\n"
+             b"Jane,Doe Bail,jane@doebail.com\n"
+             b"George,,anbba@americannationalbail.com\n"
+             b",Acme Bail,office@acmebail.com\n")
+    assert _upload(client, sheet, "nh.csv").status_code == 200
+    linked = Company(name="Linked Bail")
+    db.add(linked)
+    db.flush()
+    db.add(Contact(email="sam@linkedbail.com", first_name="Sam", company_id=linked.id))  # company from the client record
+    db.commit()
+
+    listed = client.get("/api/contacts", params={"missing_data": "true"}).json()["items"]
+    assert {c["email"]: c["missing_fields"] for c in listed} == {
+        "anbba@americannationalbail.com": ["company_name"], "office@acmebail.com": ["first_name"]}
+    assert client.get("/api/contacts/count", params={"missing_data": "true"}).json()["total"] == 2
+
+    r = client.get("/api/contacts/missing-names/export")
+    assert r.status_code == 200 and "missing-data-" in r.headers["content-disposition"]
+    filled = r.text.replace("anbba@americannationalbail.com,George,,,", "anbba@americannationalbail.com,George,,American National Bail,"
+                            ).replace("office@acmebail.com,,", "office@acmebail.com,Tom,")
+    assert filled != r.text
+    assert _upload(client, filled.encode(), "filled.csv", duplicate_strategy="update").status_code == 200
+    assert client.get("/api/contacts/count", params={"missing_data": "true"}).json()["total"] == 0
+
+
 def test_per_lead_personalized_preview(client, db):
     cid, ids = _setup(client, db)
     p = client.get(f"/api/campaigns/{cid}/preview/{ids['ready@a.com']}").json()
@@ -259,7 +287,7 @@ def test_missing_names_collect_export_and_fill_back(client, db):
     assert sorted(c["email"] for c in listed) == ["info@lonestarbail.com", "office@acmebail.com"]
 
     r = client.get("/api/contacts/missing-names/export")
-    assert r.status_code == 200 and "missing-names-" in r.headers["content-disposition"]
+    assert r.status_code == 200 and "missing-data-" in r.headers["content-disposition"]
     lines = r.text.strip().splitlines()
     assert lines[0] == "email,first_name,last_name,company_name,website,job_title,city,state,linkedin_url,original_text"
     assert any(line.startswith("info@lonestarbail.com,,,Lone Star Bail Bonds,") and

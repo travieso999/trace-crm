@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CalendarClock, History, Mail } from "lucide-react";
+import { AlertTriangle, CalendarClock, CheckCircle2, ChevronRight, History, Info, Mail } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState, ErrorState, PageHeader, StatusBadge } from "@/components/common";
 import { DailyBars, TrendLines } from "@/components/charts";
 import { api } from "@/lib/api";
 import { dateTime, humanize, num, pct, relTime } from "@/lib/format";
-import type { Dashboard } from "@/lib/types";
+import type { AttentionItem, Dashboard } from "@/lib/types";
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -43,6 +43,47 @@ function Funnel({ stages }: { stages: Dashboard["funnel"] }) {
   );
 }
 
+const SEVERITY = {
+  error: { icon: AlertTriangle, tone: "text-red-600 dark:text-red-400" },
+  warning: { icon: AlertTriangle, tone: "text-amber-600 dark:text-amber-400" },
+  info: { icon: Info, tone: "text-muted-foreground" },
+} as const;
+
+/** Everything that needs a person, in one place, worst first; each row links to where it's fixed. */
+function NeedsAttention({ items }: { items: AttentionItem[] }) {
+  if (items.length === 0)
+    return (
+      <p className="mt-4 flex items-center gap-2 rounded-xl border px-4 py-3 text-sm text-muted-foreground">
+        <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden /> Nothing needs attention: campaigns are running normally.
+      </p>
+    );
+  const order = { error: 0, warning: 1, info: 2 };
+  const sorted = [...items].sort((a, b) => order[a.severity] - order[b.severity]);
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle>Needs attention</CardTitle>
+        <CardDescription>Problems and anything waiting on you, worst first</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-1">
+        {sorted.map((it, i) => {
+          const { icon: Icon, tone } = SEVERITY[it.severity];
+          return (
+            <Link key={`${it.kind}-${i}`} href={it.href} className="group flex items-start gap-3 rounded-md px-2 py-2 hover:bg-muted">
+              <Icon className={`mt-0.5 size-4 shrink-0 ${tone}`} aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{it.title}</span>
+                <span className="block text-xs text-muted-foreground">{it.detail}</span>
+              </span>
+              <ChevronRight className="mt-0.5 size-4 shrink-0 text-muted-foreground opacity-0 group-hover:opacity-100" aria-hidden />
+            </Link>
+          );
+        })}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function OverviewPage() {
   const q = useQuery({ queryKey: ["dashboard"], queryFn: () => api<Dashboard>("/api/dashboard"), refetchInterval: 60_000 });
 
@@ -66,6 +107,8 @@ export default function OverviewPage() {
   return (
     <>
       <PageHeader title="Overview" description={`All times in ${d.timezone}. Rates cover the last 30 days.`} />
+      <NeedsAttention items={d.attention ?? []} />
+      <div className="mt-4" />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Sent today" value={num(k.sent_today)} hint={`${num(k.queued_messages)} queued`} />

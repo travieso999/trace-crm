@@ -46,6 +46,9 @@ def _database_url() -> str:
     srv = pgserver.get_server(pgdata, cleanup_mode="stop")
     if "1 row" not in srv.psql("select 1 from pg_database where datname='outreach_test';"):
         srv.psql("create database outreach_test;")
+    # production (Neon) runs in UTC; the local server would otherwise use this computer's time zone, which changes how
+    # timestamps come back and where "today" ends
+    srv.psql("alter database outreach_test set timezone to 'UTC';")
     base = srv.get_uri().rsplit("/", 1)[0].replace("postgresql://", "postgresql+psycopg://")
     pytest._pgserver = srv  # keep a reference so it is not garbage collected
     return f"{base}/outreach_test"
@@ -87,7 +90,14 @@ def _clean_db():
         tables = [r[0] for r in conn.execute(text(
             "select tablename from pg_tables where schemaname='public'")) if r[0] not in TABLES_TO_KEEP]
         if tables:
-            conn.execute(text("TRUNCATE " + ", ".join(f'"{t}"' for t in tables) + " RESTART IDENTITY CASCADE"))
+            # DELETE, not TRUNCATE: a test leaves a few rows, and TRUNCATE recreates every table's files, which took
+            # up to 25 s per test on Windows. Foreign-key triggers are off for this session so the order doesn't matter.
+            conn.execute(text("SET session_replication_role = replica"))
+            for t in tables:
+                conn.execute(text(f'DELETE FROM "{t}"'))
+            conn.execute(text("SET session_replication_role = DEFAULT"))
+            for (seq,) in conn.execute(text("select sequencename from pg_sequences where schemaname='public'")):
+                conn.execute(text(f'ALTER SEQUENCE "{seq}" RESTART'))
         _seed_stages(conn)  # reference data the migration seeds
     engine.dispose()
 

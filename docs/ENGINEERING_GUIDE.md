@@ -262,6 +262,9 @@ it for anything security-relevant.
 | `scheduling.py` | Sending windows, business-day delays and time zones (`in_window`, `next_window_start`, `add_delay`). |
 | `rendering.py` | Template rendering: `{{var}}` / `{{var|fallback}}`, no expressions, HTML-escaped. Raises `MissingVariables` instead of sending a broken email. |
 | `enrollment.py` | Read-only dry runs: missing-variable reports and per-prospect previews before enrolling. |
+| `attention.py` | The "Needs attention" list (Overview page and daily summary), including the stuck-prospect self-check. |
+| `daily_summary.py` | End-of-day summary email to the operator, sent from the engine pass once per local day. |
+| `company_suggest.py` | Suggests a company name from a business email domain, for the Missing data tab (approval only). |
 | `inbound.py` | **Reply sync** (§7.3): parse MIME, classify, match to a sent message, apply effects under a row lock. `sync_mailbox` is the entry point. |
 | `inbox.py` | Unified Inbox visibility: only campaign conversations are shown; "delete" hides (soft) and stays hidden across syncs. |
 | `google_oauth.py` | OAuth authorize URL (PKCE + state), code exchange, token storage (encrypted), refresh under a row lock, revoke. |

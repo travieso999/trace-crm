@@ -58,8 +58,10 @@ def _missing(campaign: Campaign, vars_: dict[str, str]) -> list[str]:
 def report(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID]) -> list[dict]:
     ids = list(dict.fromkeys(contact_ids))
     contacts = {c.id: c for c in db.scalars(select(Contact).where(Contact.id.in_(ids), Contact.deleted_at.is_(None)))}
+    # removed prospects (by hand, or left out for missing data) are added back by an explicit add, so they're not "in"
     enrolled = set(db.scalars(select(CampaignContact.contact_id).where(
-        CampaignContact.campaign_id == campaign.id, CampaignContact.contact_id.in_(ids))))
+        CampaignContact.campaign_id == campaign.id, CampaignContact.contact_id.in_(ids),
+        CampaignContact.status != "removed")))
     suppressed = suppressed_set(db, [c.email for c in contacts.values()])
     # not a skip reason: these prospects are added, and their emails wait out the campaign's cooldown
     days = campaign.cross_campaign_cooldown_days

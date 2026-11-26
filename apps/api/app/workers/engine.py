@@ -11,7 +11,7 @@ from app.core.logging import log
 from app.models import EmailAccount
 from app.models.base import utcnow
 from app.services import campaigns as campaign_service
-from app.services import inbound, reminders, sending, tracking
+from app.services import daily_summary, inbound, reminders, sending, tracking
 
 logger = logging.getLogger("app.engine")
 
@@ -60,6 +60,7 @@ def tick(force_sync: bool = False) -> dict:
         "reminders": reminders.tick(),
         "audience": sync_audiences(),
         "tracking_purged": purge_tracking(),
+        "daily_summary": daily_summary.tick(),
     }
     if result["activated"] or result["replies"] or result["sends"] or result["reminders"] or result["audience"]:
         log(logger, logging.INFO, "engine_tick", **{k: v for k, v in result.items() if v})

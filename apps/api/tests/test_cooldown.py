@@ -16,7 +16,7 @@ def _sent_to(db, email: str) -> int:
     return db.scalar(select(func.count()).select_from(SentMessage).where(SentMessage.to_email == email))
 
 
-def test_second_campaign_waits_out_the_cooldown(client, db, outbox, compliance):
+def test_second_campaign_waits_out_the_cooldown(client, db, outbox, compliance):  # noqa: F811
     mid = setup_mailbox(client, db)
     shared, only_a, only_b = make_contacts(client, "shared@acmebail.com", "a@acmebail.com", "b@acmebail.com")
     setup_campaign(client, mid, [shared, only_a], steps=ONE_STEP, name="List one")
@@ -43,7 +43,7 @@ def test_second_campaign_waits_out_the_cooldown(client, db, outbox, compliance):
     assert _sent_to(db, "shared@acmebail.com") == 2
 
 
-def test_two_campaigns_starting_together_send_one_email(client, db, outbox, compliance):
+def test_two_campaigns_starting_together_send_one_email(client, db, outbox, compliance):  # noqa: F811
     mid = setup_mailbox(client, db)
     [shared] = make_contacts(client, "shared@acmebail.com")
     setup_campaign(client, mid, [shared], steps=ONE_STEP, name="List one")
@@ -53,7 +53,7 @@ def test_two_campaigns_starting_together_send_one_email(client, db, outbox, comp
     assert _sent_to(db, "shared@acmebail.com") == 1
 
 
-def test_cooldown_off_allows_both(client, db, outbox, compliance):
+def test_cooldown_off_allows_both(client, db, outbox, compliance):  # noqa: F811
     mid = setup_mailbox(client, db)
     [shared] = make_contacts(client, "shared@acmebail.com")
     setup_campaign(client, mid, [shared], steps=ONE_STEP, name="List one", cross_campaign_cooldown_days=0)
@@ -61,7 +61,7 @@ def test_cooldown_off_allows_both(client, db, outbox, compliance):
     assert sending.send_due() == {"sent": 2}
 
 
-def test_own_follow_ups_are_not_held_back(client, db, outbox, compliance):
+def test_own_follow_ups_are_not_held_back(client, db, outbox, compliance):  # noqa: F811
     mid = setup_mailbox(client, db)
     [lead] = make_contacts(client, "owner@acmebail.com")
     steps = ONE_STEP + [{"delay_days": 2, "subject": "", "body": "Following up.", "reply_in_thread": True}]
@@ -73,7 +73,7 @@ def test_own_follow_ups_are_not_held_back(client, db, outbox, compliance):
     assert sending.send_due() == {"sent": 1}
 
 
-def test_send_dialog_and_enroll_preview_show_the_overlap(client, db, outbox, compliance):
+def test_send_dialog_and_enroll_preview_show_the_overlap(client, db, outbox, compliance):  # noqa: F811
     mid = setup_mailbox(client, db)
     emailed, running, fresh = make_contacts(client, "emailed@acmebail.com", "running@acmebail.com", "new@acmebail.com")
     setup_campaign(client, mid, [emailed], steps=ONE_STEP, name="List one")
@@ -112,7 +112,7 @@ def test_cooldown_setting_round_trips_and_copies(client, db):
     assert copy["cross_campaign_cooldown_days"] == 30
 
 
-def test_prospect_outreach_history(client, db, outbox, compliance):
+def test_prospect_outreach_history(client, db, outbox, compliance):  # noqa: F811
     mid = setup_mailbox(client, db)
     [lead] = make_contacts(client, "owner@acmebail.com")
     setup_campaign(client, mid, [lead], steps=ONE_STEP, name="List one", cross_campaign_cooldown_days=0)

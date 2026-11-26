@@ -216,8 +216,8 @@ def test_import_into_a_campaign_leaves_out_prospects_without_a_name(client, db):
     r = _upload(client, sheet, "kentucky.csv", campaign_id=cid)
     assert r.status_code == 200, r.text
     assert r.json()["enrollment"]["enrolled"] == 1 and r.json()["enrollment"]["skipped_missing_fields"] == 1
-    assert set(db.scalars(select(Contact.email).join(CampaignContact, CampaignContact.contact_id == Contact.id))) == {
-        "jane@doebail.com"}
+    assert set(db.scalars(select(Contact.email).join(CampaignContact, CampaignContact.contact_id == Contact.id)
+                          .where(CampaignContact.status != "removed"))) == {"jane@doebail.com"}
     assert client.get("/api/contacts/count", params={"missing_name": "true"}).json()["total"] == 1
 
     # names filled in and uploaded back to the same campaign: now they join

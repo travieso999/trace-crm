@@ -22,3 +22,4 @@ class Message(BaseModel):
 
 class BulkResult(BaseModel):
     updated: int
+    message: str | None = None  # what was skipped and why, when there's more to say than the count

@@ -8,7 +8,7 @@ import copy
 import json
 import re
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -418,6 +418,13 @@ def test_hiding_a_prospect_until_they_engage_again(client, db, website, secret):
 PHONE = {"User-Agent": SAMPLE["user_agent"]}
 
 
+def sent_before_the_sample(db):
+    """The sample visit has a fixed date; website activity counts for an email sent before it, so date the test's
+    emails just before the visit (otherwise these tests break once that date is in the past)."""
+    db.execute(update(SentMessage).values(sent_at=datetime(2026, 11, 17, 14, 0, tzinfo=UTC)))
+    db.commit()
+
+
 def test_email_tracking_and_engaged_prospects_agree(client, db, website, secret, outbox, compliance):  # noqa: F811
     steps = [{"subject": "Demo", "body": "Hi {{first_name}}\n\n[Watch](https://trace-studio.tech/demo)\n\nBest,\nSam"}]
     mid = setup_mailbox(client, db)
@@ -430,6 +437,7 @@ def test_email_tracking_and_engaged_prospects_agree(client, db, website, secret,
     assert website.get(f"/t/{link.token}", follow_redirects=False, headers=PHONE).status_code == 302
     click = db.scalar(select(TrackingEvent).where(TrackingEvent.link_id == link.id))
     assert click.suspected_bot and not click.verified_human
+    sent_before_the_sample(db)
 
     # ...then the website reports them watching, starting and completing the application
     post(website, batch(rid=hot, events=[ev("session_start", "04:00"), *JOURNEY]))
@@ -452,6 +460,7 @@ def test_who_clicked_but_did_not_apply_or_reply(client, db, website, secret, out
     browsed, applied = make_contacts(client, "browsed@one.com", "applied@two.com")
     camp = setup_campaign(client, mid, [browsed, applied], steps=steps)
     assert sending.send_due() == {"sent": 2}
+    sent_before_the_sample(db)
     post(website, batch(rid=browsed, vid="v-b", sid="s-b", events=[ev("session_start", "04:00")]))
     post(website, batch(rid=applied, vid="v-a", sid="s-a", events=[ev("session_start", "04:00"), *JOURNEY]))
 

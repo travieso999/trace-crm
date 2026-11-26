@@ -37,7 +37,7 @@ from app.schemas.contacts import (
     CsvPreviewOut,
     TagOut,
 )
-from app.services import audience, cooldown, import_lists, security_alerts
+from app.services import audience, company_suggest, cooldown, enrollment, import_lists, security_alerts
 from app.services import campaigns as campaign_service
 from app.services import notes as note_service
 from app.services.audience import AudienceFilter, contacts_query
@@ -122,6 +122,8 @@ def _out(db: Session, contacts: list[Contact]) -> list[ContactOut]:
         has_company = bool((c.company_name or "").strip()) or bool(co and (co.name or "").strip() and co.name != co.domain)
         o.missing_fields = [f for f, ok in (("first_name", bool((c.first_name or "").strip())),
                                             ("company_name", has_company)) if not ok]
+        if not has_company:
+            o.suggested_company = company_suggest.suggest(c.email)
         out.append(o)
     return out
 
@@ -264,7 +266,10 @@ def update_contact(contact_id: uuid.UUID, body: ContactUpdate, request: Request,
         set_lead_status(db, contact, status, user)
         if status == "not_interested":
             campaign_service.stop_contact_everywhere(db, contact.id, "not_interested")
-    audit(db, user, "contact.updated", "contact", contact.id, request, fields=sorted(data.keys()))
+    db.flush()
+    readded = campaign_service.readd_filled_in(db, [contact.id], user)  # the edit may have filled in missing data
+    audit(db, user, "contact.updated", "contact", contact.id, request, fields=sorted(data.keys()),
+          **({"readded": readded["readded"]} if readded["readded"] else {}))
     db.commit()
     db.refresh(contact)
     return _out(db, [contact])[0]
@@ -353,6 +358,7 @@ def add_note(contact_id: uuid.UUID, body: dict, user: User = Depends(writer), db
 def bulk_action(body: BulkContactAction, request: Request, user: User = Depends(writer), db: Session = Depends(get_db)):
     contacts = list(db.scalars(select(Contact).where(Contact.id.in_(body.ids), Contact.deleted_at.is_(None))))
     n = 0
+    message = None
     if body.action == "delete":
         for c in contacts:
             campaign_service.stop_contact_everywhere(db, c.id, "removed", status="removed")
@@ -390,10 +396,16 @@ def bulk_action(body: BulkContactAction, request: Request, user: User = Depends(
         campaign = db.get(Campaign, body.value) if body.value else None
         if not campaign or campaign.deleted_at:
             raise HTTPException(404, "Campaign not found")
-        n = campaign_service.enroll_contacts(db, campaign, [c.id for c in contacts], user)["enrolled"]
+        r = campaign_service.enroll_contacts(db, campaign, [c.id for c in contacts], user)
+        n = r["enrolled"]
+        skipped = [f"{r[k]} {label}" for k, label in (
+            ("skipped_existing", "already in it"), ("skipped_suppressed", "suppressed"),
+            ("skipped_invalid", "invalid email or closed stage"),
+            ("skipped_missing_fields", "missing a name or company its emails use")) if r[k]]
+        message = f"{n} added to “{campaign.name}”" + (f"; skipped: {', '.join(skipped)}" if skipped else "")
     audit(db, user, f"contacts.bulk.{body.action}", "contact", None, request, count=n, value=body.value)
     db.commit()
-    return BulkResult(updated=n)
+    return BulkResult(updated=n, message=message)
 
 
 async def _read_upload(file: UploadFile) -> bytes:
@@ -454,13 +466,21 @@ async def import_commit(
             batch = import_lists.create(db, name=opts.list_name, filename=file.filename, sha256=sha,
                                         file_format=meta["format"], total_rows=len(rows), result=result,
                                         members=members, user=user)
-        if opts.campaign_id and not opts.dry_run:
+        member_ids = list(dict.fromkeys(m[0] for m in members))
+        if opts.campaign_id:
             campaign = db.get(Campaign, opts.campaign_id)
             if not campaign or campaign.deleted_at:
                 raise CsvError("Campaign not found")
-            # the whole list joins the campaign, including prospects that were already in the CRM
-            enrolled = campaign_service.enroll_contacts(db, campaign, list(dict.fromkeys(m[0] for m in members)), user)
-            import_lists.link_campaign(db, campaign.id, batch.id)
+            if opts.dry_run:
+                # who would join and who'd be left out, before anything is saved (the prospects exist only in this
+                # transaction, which is rolled back below)
+                result["enrollment_preview"] = enrollment.summarize(enrollment.report(db, campaign, member_ids))
+            else:
+                # the whole list joins the campaign, including prospects that were already in the CRM
+                enrolled = campaign_service.enroll_contacts(db, campaign, member_ids, user)
+                import_lists.link_campaign(db, campaign.id, batch.id)
+        # prospects taken out of campaigns for missing data go back in now that the upload filled it in
+        readded = None if opts.dry_run else campaign_service.readd_filled_in(db, touched, user)
     except CsvError as exc:
         db.rollback()
         raise HTTPException(422, str(exc)) from exc
@@ -483,6 +503,7 @@ async def import_commit(
         result["list_name"] = batch.name
         result["list_contacts"] = len({m[0] for m in members})
         result["enrollment"] = enrolled
+        result["readded"] = readded
     return CsvImportOut(**result)
 
 

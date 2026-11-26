@@ -59,6 +59,10 @@ type Result = {
   list_name: string | null;
   list_contacts: number;
   enrollment: { enrolled: number; skipped_existing: number; skipped_suppressed: number; skipped_invalid: number; skipped_missing_fields?: number } | null;
+  /** dry run into a campaign: who would join and who'd be left out */
+  enrollment_preview?: { ready: number; missing_fields: number; already_enrolled: number; suppressed: number; invalid_email: number; closed_stage: number } | null;
+  /** prospects back in campaigns they'd left for missing data, now that this upload filled it in */
+  readded?: { readded: number; campaigns: { id: string; name: string; added: number; reopened: boolean }[]; not_ready: number } | null;
 };
 
 export type ImportResult = Result;
@@ -280,7 +284,9 @@ export function ImportFlow({ campaignId, campaignName, onImported }: { campaignI
       setResult(r);
       if (!dryRun) {
         toast.success(`Saved as list “${r.list_name}” · ${num(r.list_contacts)} prospects`, {
-          description: r.enrollment
+          description: r.readded?.readded
+            ? `${num(r.readded.readded)} back in their campaigns now that their data is filled in`
+            : r.enrollment
             ? `${num(r.enrollment.enrolled)} added to ${campaignName ?? "the campaign"}${r.enrollment.skipped_missing_fields ? ` · ${num(r.enrollment.skipped_missing_fields)} missing a name or data, not added` : ""}`
             : `${num(r.created)} new, ${num(r.updated)} updated`,
         });
@@ -471,6 +477,36 @@ export function ImportFlow({ campaignId, campaignName, onImported }: { campaignI
           </CardHeader>
           <CardContent className="grid gap-4">
             <Report r={result} />
+            {result.dry_run && result.enrollment_preview && (
+              <div className="rounded-md border px-3 py-2 text-sm" role="status">
+                <p>
+                  <span className="font-medium">{num(result.enrollment_preview.ready)} will be added</span> to {campaignName ?? "the campaign"}.
+                </p>
+                {result.enrollment_preview.missing_fields > 0 && (
+                  <p className="mt-1 text-amber-700 dark:text-amber-400">
+                    {num(result.enrollment_preview.missing_fields)} left out: missing a first name or company name the emails use. They go to Imported
+                    Lists → Missing data, and join automatically once it’s filled in.
+                  </p>
+                )}
+                {result.enrollment_preview.already_enrolled + result.enrollment_preview.suppressed + result.enrollment_preview.invalid_email + result.enrollment_preview.closed_stage > 0 && (
+                  <p className="mt-1 text-muted-foreground">
+                    Also skipped: {num(result.enrollment_preview.already_enrolled)} already in the campaign, {num(result.enrollment_preview.suppressed)} suppressed,{" "}
+                    {num(result.enrollment_preview.invalid_email)} invalid email, {num(result.enrollment_preview.closed_stage)} closed stage.
+                  </p>
+                )}
+              </div>
+            )}
+            {done && result.readded && result.readded.readded > 0 && (
+              <p className="flex items-start gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-sm" role="status">
+                <Send className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                <span>
+                  {num(result.readded.readded)} prospect{result.readded.readded === 1 ? "" : "s"} with filled-in data went back into their campaign
+                  {result.readded.campaigns.length === 1 ? "" : "s"}:{" "}
+                  {result.readded.campaigns.map((c) => `${c.name} (${num(c.added)}${c.reopened ? ", reopened" : ""})`).join(", ")}.
+                  {result.readded.not_ready > 0 && ` ${num(result.readded.not_ready)} still missing something stay on Missing data.`}
+                </span>
+              </p>
+            )}
             {done && result.batch_id && (
               <p className="flex items-start gap-2 rounded-md bg-emerald-500/10 px-3 py-2 text-sm" role="status">
                 <ListChecks className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
@@ -484,7 +520,7 @@ export function ImportFlow({ campaignId, campaignName, onImported }: { campaignI
                         : ""
                     }${
                       result.enrollment.skipped_missing_fields
-                        ? `; ${num(result.enrollment.skipped_missing_fields)} not added because the emails need a name or other data they don’t have (fill it in from Imported Lists → Missing data, then add them)`
+                        ? `; ${num(result.enrollment.skipped_missing_fields)} not added because the emails need a name or other data they don’t have (they join automatically once it’s filled in on Imported Lists → Missing data)`
                         : ""
                     }.`}
                 </span>

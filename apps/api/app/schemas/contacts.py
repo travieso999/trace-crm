@@ -98,6 +98,7 @@ class ContactOut(ORMModel):
     campaigns: list[dict] = []
     # what {{first_name}} / {{company_name}} would lack: "first_name", "company_name" (the Missing data tab)
     missing_fields: list[str] = []
+    suggested_company: str | None = None  # from a business email domain, when company_name is missing (to approve)
 
 
 class ActivityOut(ORMModel):
@@ -170,6 +171,8 @@ class CsvImportOut(BaseModel):
     list_name: str | None = None
     list_contacts: int = 0
     enrollment: dict | None = None  # campaign enrollment result when campaign_id was given
+    enrollment_preview: dict | None = None  # dry run with campaign_id: who would join / be left out (enrollment.summarize)
+    readded: dict | None = None  # prospects back in campaigns they'd left for missing data (readd_filled_in)
 
 
 class CompanyBase(BaseModel):

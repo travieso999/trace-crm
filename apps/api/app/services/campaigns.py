@@ -284,6 +284,13 @@ def enroll_contacts(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID
             result["skipped_invalid"] += 1
         elif c.id in missing:
             result["skipped_missing_fields"] += 1
+            if c.id not in rows:
+                # recorded as left out, not enrolled: it shows on the campaign as waiting for data, and
+                # readd_filled_in adds them for real once the data is filled in. Never sent anything.
+                db.add(CampaignContact(campaign_id=campaign.id, contact_id=c.id, status="removed",
+                                       stop_reason=MISSING_DATA, next_send_at=None))
+                log_activity(db, c.id, "campaign", f"Left out of campaign “{campaign.name}” until "
+                             f"{' and '.join(missing[c.id])} is filled in", user, campaign_id=str(campaign.id))
         elif c.id in rows:  # removed earlier, added back on purpose
             cc = rows[c.id]
             cc.status, cc.stop_reason, cc.paused_at = "active", None, None
@@ -301,6 +308,42 @@ def enroll_contacts(db: Session, campaign: Campaign, contact_ids: list[uuid.UUID
             result["enrolled"] += 1
     db.flush()
     return result
+
+
+def readd_filled_in(db: Session, contact_ids: list[uuid.UUID], user: User | None) -> dict:
+    """Prospects taken out of campaigns for missing data go back in once it's filled in (an upload or an edit),
+    continuing after the last email they got. A campaign that finished meanwhile reopens for them, as it does for
+    new follow-ups. Anyone still missing something stays out (enroll_contacts checks again)."""
+    out = {"readded": 0, "campaigns": [], "not_ready": 0}
+    if not contact_ids:
+        return out
+    rows = db.execute(
+        select(CampaignContact.contact_id, Campaign)
+        .join(Campaign, Campaign.id == CampaignContact.campaign_id)
+        .where(CampaignContact.contact_id.in_(list(dict.fromkeys(contact_ids))), CampaignContact.status == "removed",
+               CampaignContact.stop_reason == MISSING_DATA, Campaign.deleted_at.is_(None),
+               Campaign.archived_at.is_(None), Campaign.status != "stopped")).all()
+    by_campaign: dict[uuid.UUID, tuple[Campaign, list[uuid.UUID]]] = {}
+    for cid, campaign in rows:
+        by_campaign.setdefault(campaign.id, (campaign, []))[1].append(cid)
+    for campaign, ids in by_campaign.values():
+        reopen = campaign.status == "completed"
+        sp = db.begin_nested()
+        if reopen:  # completed -> active, as reopen_for_follow_ups does; closed again below if nothing to send
+            campaign.status, campaign.completed_at = "active", None
+        r = enroll_contacts(db, campaign, ids, user)
+        if reopen and (not r["enrolled"] or preflight(db, campaign)):
+            sp.rollback()  # nothing to send, or it can't send yet: leave it finished
+            out["not_ready"] += len(ids)
+            continue
+        sp.commit()
+        out["readded"] += r["enrolled"]
+        out["not_ready"] += r["skipped_missing_fields"]
+        if r["enrolled"]:
+            out["campaigns"].append({"id": str(campaign.id), "name": campaign.name, "added": r["enrolled"],
+                                     "reopened": reopen})
+    db.flush()
+    return out
 
 
 def release_window_waits(db: Session, *, campaign_id: uuid.UUID | None = None, mailbox_id: uuid.UUID | None = None) -> int:
@@ -535,7 +578,10 @@ def stats(db: Session, campaign_ids: list[uuid.UUID]) -> dict[uuid.UUID, dict]:
         return out
     for cid, st, n in db.execute(
         select(CampaignContact.campaign_id, CampaignContact.status, func.count())
-        .where(CampaignContact.campaign_id.in_(campaign_ids)).group_by(CampaignContact.campaign_id, CampaignContact.status)
+        .where(CampaignContact.campaign_id.in_(campaign_ids),
+               # left out for missing data (never sent anything) isn't a prospect of the campaign yet
+               CampaignContact.stop_reason.is_distinct_from(MISSING_DATA))
+        .group_by(CampaignContact.campaign_id, CampaignContact.status)
     ):
         out[cid]["leads"] += n
         if st in out[cid]:

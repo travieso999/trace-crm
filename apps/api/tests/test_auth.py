@@ -40,6 +40,11 @@ def test_login_rate_limit(app, monkeypatch):
 
     make_user()
     monkeypatch.setattr(get_settings(), "login_rate_limit_per_minute", 3)
+    # the limiter counts per clock minute; slow password hashing could otherwise spread the attempts over two minutes
+    from types import SimpleNamespace
+
+    from app.core import ratelimit
+    monkeypatch.setattr(ratelimit, "time", SimpleNamespace(time=lambda: 1_800_000_010.0))
     c = TestClient(app)
     codes = [c.post("/api/auth/login", json={"email": "admin@trace.studio", "password": "bad"}).status_code
              for _ in range(5)]

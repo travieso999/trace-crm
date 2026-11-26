@@ -55,7 +55,7 @@ function followUpStatus(r: CampaignLead, c: Campaign) {
     case "stopped":
       return r.stop_reason === "stopped_by_user" ? "Follow-ups stopped by you" : `Stopped${r.stop_reason ? ` (${humanize(r.stop_reason)})` : ""}`;
     case "removed":
-      return r.stop_reason === "missing_data" ? "Not sent: missing name or data (fill it in, then add back)" : "Removed from campaign";
+      return r.stop_reason === "missing_data" ? "Waiting for a name or company: joins once it’s filled in" : "Removed from campaign";
     default:
       return humanize(r.stop_reason ?? r.status);
   }

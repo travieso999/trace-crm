@@ -52,6 +52,7 @@ export type Contact = {
   company_id: string | null;
   company_name: string | null;
   missing_fields?: ("first_name" | "company_name")[];
+  suggested_company?: string | null;
   website: string | null;
   phone: string | null;
   city: string | null;
@@ -385,7 +386,17 @@ export type VideoFields = Pick<Step, "video_asset_id" | "video_preview" | "video
 
 export type Template = VideoFields & { id: string; name: string; subject: string; body: string; created_at: string };
 
+export type AttentionItem = {
+  kind: string;
+  severity: "error" | "warning" | "info";
+  title: string;
+  detail: string;
+  href: string;
+  count: number;
+};
+
 export type Dashboard = {
+  attention: AttentionItem[];
   timezone: string;
   kpis: {
     total_contacts: number;
@@ -706,7 +717,7 @@ export type SettingsResponse = {
     compliance: { physical_address: string; footer_template: string; list_unsubscribe_header: boolean; suppress_on_unsubscribe_reply: boolean };
     defaults: { daily_limit_per_mailbox: number; campaign_daily_limit: number; min_interval_seconds: number; schedule: Schedule; timezone: string };
     ai: { enabled: boolean; model: string; daily_token_budget: number; max_retries: number; classify_replies: boolean };
-    notifications: { notify_on_reply: boolean; notification_email: string; notify_on_mailbox_error: boolean };
+    notifications: { notify_on_reply: boolean; notification_email: string; notify_on_mailbox_error: boolean; daily_summary?: boolean; daily_summary_email?: string; daily_summary_hour?: number };
     tracking: { click_tracking: boolean; open_tracking: boolean; demo_urls: string[]; demo_origins: string[];
                 scanner_window_seconds: number; retention_days: number };
     [key: string]: Record<string, unknown>;

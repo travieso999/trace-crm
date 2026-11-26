@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ErrorState, Field, PageHeader } from "@/components/common";
+import { ErrorState, Field, NativeSelect, PageHeader } from "@/components/common";
 import { ScheduleEditor } from "@/components/schedule-editor";
 import { SecuritySettings } from "@/components/security-settings";
 import { useCan, useIsAdmin } from "@/components/app-shell";
@@ -271,7 +271,7 @@ export default function SettingsPage() {
             </ul>
           </CardContent>
         </Card>
-        <Section name="notifications" title="Notifications" description="Saved now; email notifications are sent once a notification mailbox is wired up." value={s.notifications} readOnly={ro}>
+        <Section name="notifications" title="Notifications" description="Emails come from the notification mailbox set up on the server, never from a campaign mailbox." value={s.notifications} readOnly={ro}>
           {(d, set) => (
             <>
               <Field label="Notification email" htmlFor="n-email">
@@ -285,6 +285,24 @@ export default function SettingsPage() {
                 <input type="checkbox" className={checkbox} checked={d.notify_on_mailbox_error} onChange={(e) => set({ notify_on_mailbox_error: e.target.checked })} />
                 Mailbox errors
               </label>
+              <div className="mt-2 grid gap-3 border-t pt-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" className={checkbox} checked={d.daily_summary ?? true} onChange={(e) => set({ daily_summary: e.target.checked })} />
+                  Daily summary email: sent today, replies, anything not sent and what needs attention
+                </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field label="Send the summary to" htmlFor="n-summary" hint="Leave blank to use the notification email">
+                    <Input id="n-summary" type="email" value={d.daily_summary_email ?? ""} onChange={(e) => set({ daily_summary_email: e.target.value })} />
+                  </Field>
+                  <Field label="At" htmlFor="n-hour" hint="Sending days only, in the default time zone">
+                    <NativeSelect id="n-hour" value={String(d.daily_summary_hour ?? 17)} onChange={(e) => set({ daily_summary_hour: Number(e.target.value) })}>
+                      {Array.from({ length: 24 }, (_, h) => (
+                        <option key={h} value={h}>{`${h % 12 || 12}:00 ${h < 12 ? "AM" : "PM"}`}</option>
+                      ))}
+                    </NativeSelect>
+                  </Field>
+                </div>
+              </div>
             </>
           )}
         </Section>

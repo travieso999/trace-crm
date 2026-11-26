@@ -27,7 +27,11 @@ DEFAULTS: dict[str, dict] = {
     },
     "ai": {"enabled": True, "model": "", "daily_token_budget": 200_000, "max_retries": 2, "classify_replies": True},
     "notifications": {"notify_on_reply": True, "notification_email": "", "notify_on_mailbox_error": True,
-                      "email_task_reminders": True},
+                      "email_task_reminders": True,
+                      # end-of-day summary (services/daily_summary.py): to daily_summary_email, else notification_email,
+                      # on the default schedule's sending days, at the first engine pass after this hour (defaults
+                      # timezone)
+                      "daily_summary": True, "daily_summary_email": "", "daily_summary_hour": 17},
     "crm": {"task_types": ["Call", "Email", "Follow-up", "Meeting", "Proposal", "Payment Reminder", "Other"]},
     "security": {"session_ttl_hours": 12},
     "retention": {"received_body_days": 365, "audit_log_days": 730, "sandbox_outbox_days": 14},
@@ -89,10 +93,20 @@ def validate_section(key: str, value: dict) -> dict:
         if not types or len(types) > 30 or any(len(t) > 40 for t in types):
             raise SettingsError("Task types: 1-30 names of up to 40 characters")
         value["task_types"] = list(dict.fromkeys(types))
-    if key == "notifications" and value.get("notification_email"):
-        from app.services.normalize import normalize_email
+    if key == "notifications":
+        from app.services.normalize import InvalidEmail, normalize_email
 
-        value["notification_email"] = normalize_email(value["notification_email"])
+        for name in ("notification_email", "daily_summary_email"):
+            if value.get(name):
+                try:
+                    value[name] = normalize_email(value[name])
+                except InvalidEmail as exc:
+                    raise SettingsError(f"{name}: {exc}") from exc
+        if "daily_summary" in value and not isinstance(value["daily_summary"], bool):
+            raise SettingsError("daily_summary must be true or false")
+        hour = value.get("daily_summary_hour", 17)
+        if isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23:
+            raise SettingsError("daily_summary_hour must be a whole hour from 0 to 23")
     if key == "ai":
         if int(value.get("daily_token_budget", 1)) < 0 or int(value.get("max_retries", 0)) not in range(0, 6):
             raise SettingsError("Invalid AI limits")

@@ -255,9 +255,10 @@ def test_missing_variable_blocks_send(client, db, outbox, compliance):
     assert db.scalar(select(ScheduledMessage)).status == "cancelled"
     assert db.scalar(select(func.count()).select_from(EmailEvent).where(EmailEvent.type == "failed")) == 0
 
-    # filled in and added back: the email goes out
+    # filled in: back in the campaign by itself, and the email goes out
     client.patch(f"/api/contacts/{contact_id}", json={"custom_fields": {"favorite_color": "red"}})
-    assert client.post(f"/api/campaigns/{cid}/contacts", json={"contact_ids": [contact_id]}).json()["enrolled"] == 1
+    db.expire_all()
+    assert db.scalar(select(CampaignContact)).status == "active"
     assert sending.send_due() == {"sent": 1}
 
 
@@ -287,8 +288,9 @@ def test_prospects_without_a_name_never_join_a_campaign(client, db, outbox, comp
     assert r.status_code == 200, r.text
     assert r.json()["enrolled"] == 0 and r.json()["removed_from_source"] == 0  # a move never strands them
     db.expire_all()
-    assert db.scalar(select(func.count()).select_from(CampaignContact).where(
-        CampaignContact.campaign_id == cid, CampaignContact.contact_id == nameless)) == 0
+    # recorded as waiting for data (shown on the campaign, joins once filled in), never as enrolled
+    assert db.execute(select(CampaignContact.status, CampaignContact.stop_reason).where(
+        CampaignContact.campaign_id == cid, CampaignContact.contact_id == nameless)).one() == ("removed", "missing_data")
     assert db.scalar(select(CampaignContact.status).where(
         CampaignContact.campaign_id == other, CampaignContact.contact_id == nameless)) == "active"
 

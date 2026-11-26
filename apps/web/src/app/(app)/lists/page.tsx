@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Download, FileSpreadsheet, MoreHorizontal, Pencil, Send, Sparkles, Trash2, Upload, UserCheck, Users } from "lucide-react";
@@ -157,6 +158,27 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
     queryKey: ["missing-names"],
     queryFn: () => api<Page<Contact>>("/api/contacts", { query: { missing_data: "true", sort: "created_at", order: "desc", page_size: MISSING_PAGE } }),
   });
+  const qc = useQueryClient();
+  const [applying, setApplying] = React.useState<string | null>(null); // contact id, or "all"
+  async function applySuggestions(list: Contact[]) {
+    setApplying(list.length === 1 ? list[0].id : "all");
+    let readded = 0;
+    try {
+      for (const c of list) {
+        // saving the company also puts the prospect back into any campaign they'd left for it
+        const r = await api<Contact>(`/api/contacts/${c.id}`, { method: "PATCH", body: { company_name: c.suggested_company } });
+        if (!r.missing_fields?.length) readded += (c.campaigns ?? []).filter((x) => x.status === "removed").length;
+      }
+      toast.success(`Company name saved for ${num(list.length)} prospect${list.length === 1 ? "" : "s"}`, {
+        description: readded ? "Anyone left out of a campaign for it is back in." : undefined,
+      });
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setApplying(null);
+      qc.invalidateQueries({ queryKey: ["missing-names"] });
+    }
+  }
   const [exporting, setExporting] = React.useState(false);
   async function exportMissing() {
     setExporting(true);
@@ -172,6 +194,7 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
   if (missing.isError) return <ErrorState error={missing.error} onRetry={() => missing.refetch()} />;
   if (missing.isPending) return <Skeleton className="h-40" />;
   const { items, total } = missing.data;
+  const suggestable = items.filter((c) => c.suggested_company);
   if (total === 0)
     return (
       <EmptyState
@@ -193,7 +216,8 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
             <li>Give the file to Claude and ask it to fill in the blank first_name, last_name and company_name, keeping every other column as it is.</li>
             <li>
               Upload the filled file and choose <span className="font-medium text-foreground">“Fill in their blank fields”</span> for prospects already in
-              Prospects. They leave this tab once both are filled in.
+              Prospects. They leave this tab once both are filled in, and go back into any campaign they were left out of, starting with its
+              first email.
             </li>
           </ol>
         </div>
@@ -207,6 +231,12 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
             <Link href="/prospects/import" className={cn(buttonVariants({ variant: "outline" }))}>
               <Upload /> Upload filled file
             </Link>
+          )}
+          {canWrite && suggestable.length > 0 && (
+            <Button variant="outline" disabled={applying !== null} onClick={() => applySuggestions(suggestable)}
+              title="Company names read from business email addresses, e.g. info@lonestarbail.com → Lone Star Bail">
+              <Sparkles /> Use {num(suggestable.length)} suggested compan{suggestable.length === 1 ? "y" : "ies"}
+            </Button>
           )}
         </div>
       </div>
@@ -231,7 +261,24 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
                   </Link>
                 </TableCell>
                 <TableCell className="whitespace-nowrap text-sm">{missingOf(c)}</TableCell>
-                <TableCell className="max-w-56 truncate">{c.company_name ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                <TableCell className="max-w-64">
+                  {c.company_name ? (
+                    <span className="block truncate">{c.company_name}</span>
+                  ) : c.suggested_company ? (
+                    <span className="flex items-center gap-2">
+                      <span className="truncate text-muted-foreground" title="Suggested from the email address">
+                        {c.suggested_company}?
+                      </span>
+                      {canWrite && (
+                        <Button size="sm" variant="outline" className="h-7 px-2" disabled={applying !== null} onClick={() => applySuggestions([c])}>
+                          Use
+                        </Button>
+                      )}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
                 <TableCell className="hidden max-w-56 truncate text-muted-foreground md:table-cell">{c.custom_fields?.source_name ?? "—"}</TableCell>
                 <TableCell className="hidden max-w-56 truncate text-muted-foreground lg:table-cell">{c.website ?? "—"}</TableCell>
                 <TableCell className="hidden text-muted-foreground md:table-cell" title={dateTime(c.created_at)}>
@@ -253,6 +300,7 @@ function MissingNames({ canWrite }: { canWrite: boolean }) {
 
 export default function ImportedListsPage() {
   const qc = useQueryClient();
+  const params = useSearchParams(); // ?tab=missing opens the Missing data tab (linked from the Overview page)
   const canWrite = useCanWrite();
   const lists = useQuery({ queryKey: ["import-lists"], queryFn: () => api<ImportList[]>("/api/imports") });
   const missingCount = useQuery({
@@ -293,7 +341,7 @@ export default function ImportedListsPage() {
           )
         }
       />
-      <Tabs defaultValue="lists">
+      <Tabs defaultValue={params.get("tab") === "missing" ? "missing" : "lists"}>
         <TabsList variant="line" className="mb-4">
           <TabsTrigger value="lists">Lists</TabsTrigger>
           <TabsTrigger value="missing">Missing data{missingCount.data ? ` (${num(missingCount.data.total)})` : ""}</TabsTrigger>

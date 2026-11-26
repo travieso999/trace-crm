@@ -22,7 +22,7 @@ from app.models import (
 )
 from app.models.base import utcnow
 from app.models.crm import LEAD_STATUSES
-from app.services import app_settings
+from app.services import app_settings, attention
 from app.services.inbound import current_error
 from app.services.scheduling import _tz, start_of_local_day
 
@@ -174,6 +174,7 @@ def dashboard(db: Session) -> dict:
     ).all()
     queued = db.scalar(select(func.count()).select_from(ScheduledMessage).where(ScheduledMessage.status == "queued"))
     return {
+        "attention": attention.items(db),
         "timezone": tz_name,
         "kpis": {
             "total_contacts": db.scalar(select(func.count()).select_from(Contact).where(Contact.deleted_at.is_(None))) or 0,
